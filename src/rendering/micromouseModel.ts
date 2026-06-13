@@ -24,7 +24,6 @@ export interface SensorBlueprint {
 export interface MicromouseBlueprint {
   readonly chassis: {
     readonly width: number;
-    readonly colliderWidth: number;
     readonly height: number;
     readonly depth: number;
     readonly centerY: number;
@@ -66,7 +65,6 @@ export interface MicromouseBlueprint {
 export const MICROMOUSE_BLUEPRINT: MicromouseBlueprint = {
   chassis: {
     width: 0.47,
-    colliderWidth: 0.31,
     height: 0.11,
     depth: 0.57,
     centerY: 0.105,

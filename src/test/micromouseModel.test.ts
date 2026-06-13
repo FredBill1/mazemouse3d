@@ -4,6 +4,7 @@ import {
   initialMouseYaw,
   yawBetweenCells,
 } from "../rendering/micromouseModel";
+import { boardFootprintPoints } from "../rendering/micromouseRig";
 
 describe("micromouse model", () => {
   it("describes the expected visible hardware", () => {
@@ -22,13 +23,9 @@ describe("micromouse model", () => {
     const outerWheelX =
       Math.max(...MICROMOUSE_BLUEPRINT.wheels.map((wheel) => Math.abs(wheel.localX))) +
       MICROMOUSE_BLUEPRINT.wheel.width / 2;
-    const innerWheelX =
-      Math.min(...MICROMOUSE_BLUEPRINT.wheels.map((wheel) => Math.abs(wheel.localX))) -
-      MICROMOUSE_BLUEPRINT.wheel.width / 2;
 
     expect(wheelZValues.every((localZ) => localZ < 0)).toBe(true);
     expect(outerWheelX).toBeLessThanOrEqual(MICROMOUSE_BLUEPRINT.chassis.width / 2);
-    expect(innerWheelX).toBeGreaterThan(MICROMOUSE_BLUEPRINT.chassis.colliderWidth / 2);
     expect(frontWheelZ - rearWheelZ).toBeGreaterThan(MICROMOUSE_BLUEPRINT.wheel.radius * 2);
     expect(MICROMOUSE_BLUEPRINT.chassis.centerOfMassOffset.z).toBeGreaterThanOrEqual(rearWheelZ);
     expect(MICROMOUSE_BLUEPRINT.chassis.centerOfMassOffset.z).toBeLessThanOrEqual(frontWheelZ);
@@ -53,6 +50,33 @@ describe("micromouse model", () => {
     expect(MICROMOUSE_BLUEPRINT.electronics.motorLocalZ).toBeLessThan(0);
     expect(MICROMOUSE_BLUEPRINT.electronics.batteryLocalZ).toBeLessThan(0);
     expect(MICROMOUSE_BLUEPRINT.electronics.connectorLocalZ).toBeLessThan(0);
+  });
+
+  it("cuts wheel notches into the PCB footprint and computes the circular front intersections", () => {
+    const footprint = boardFootprintPoints();
+    const halfWidth = MICROMOUSE_BLUEPRINT.pcb.width / 2;
+    const sideIntersectionZ =
+      MICROMOUSE_BLUEPRINT.pcb.frontArcCenterZ +
+      Math.sqrt(
+        MICROMOUSE_BLUEPRINT.pcb.frontRadius ** 2 - (MICROMOUSE_BLUEPRINT.pcb.width / 2) ** 2,
+      );
+    const wheelCutoutFront =
+      Math.max(...MICROMOUSE_BLUEPRINT.wheels.map((wheel) => wheel.localZ)) +
+      MICROMOUSE_BLUEPRINT.wheel.radius +
+      0.012;
+    const rightWheelCutoutPoints = footprint.filter(
+      (point) => point.x > 0 && point.x < halfWidth - 0.02 && point.z <= wheelCutoutFront,
+    );
+    const leftWheelCutoutPoints = footprint.filter(
+      (point) => point.x < 0 && point.x > -halfWidth + 0.02 && point.z <= wheelCutoutFront,
+    );
+    const rightFrontSide = footprint.find(
+      (point) => Math.abs(point.x - halfWidth) < 0.000001 && point.z > wheelCutoutFront,
+    );
+
+    expect(rightWheelCutoutPoints).toHaveLength(2);
+    expect(leftWheelCutoutPoints).toHaveLength(2);
+    expect(rightFrontSide?.z).toBeCloseTo(sideIntersectionZ);
   });
 
   it("maps neighboring cells to local +Z based yaw", () => {

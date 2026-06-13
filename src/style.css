@@ -202,7 +202,6 @@ textarea {
   grid-template-columns: minmax(100px, 1fr) minmax(96px, 1fr);
   gap: 1px;
   margin: 0;
-  overflow: hidden;
   border: 1px solid #28313a;
   border-radius: 6px;
   background: #28313a;
@@ -332,6 +331,7 @@ textarea {
   font-weight: 700;
   line-height: 1.2;
   text-transform: uppercase;
+  text-align: center;
   pointer-events: none;
 }
 

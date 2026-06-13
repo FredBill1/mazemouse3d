@@ -87,7 +87,7 @@ export class MicromouseRig {
     this.#chassis = this.#createChassis(pose.position, pose.rotation);
     this.#chassisAggregate = new PhysicsAggregate(
       this.#chassis,
-      PhysicsShapeType.BOX,
+      PhysicsShapeType.MESH,
       {
         mass: MICROMOUSE_BLUEPRINT.chassis.mass,
         friction: 0.62,
@@ -194,12 +194,7 @@ export class MicromouseRig {
   }
 
   #createChassis(position: Vector3, rotation: Quaternion): Mesh {
-    const { chassis } = MICROMOUSE_BLUEPRINT;
-    const mesh = MeshBuilder.CreateBox(
-      "micromouse-chassis-collider",
-      { width: chassis.colliderWidth, height: chassis.height, depth: chassis.depth },
-      this.#scene,
-    );
+    const mesh = createPcbColliderMesh(this.#scene, "micromouse-chassis-collider");
     mesh.position.copyFrom(position);
     mesh.rotationQuaternion = rotation.clone();
     mesh.isVisible = false;
@@ -295,6 +290,7 @@ export function createMicromouseDisplayModel(
   addRearDriveTrain(scene, materials, root, prefix);
   addBoardElectronics(scene, materials, root, prefix);
   addSensors(scene, materials, root, prefix);
+  addCenterOfMassMarker(scene, materials, root, prefix);
 
   if (options.includeWheels ?? true) {
     for (const layout of MICROMOUSE_BLUEPRINT.wheels) {
@@ -518,29 +514,36 @@ function addRearDriveTrain(
 
   addBox(
     scene,
+    `${prefix}-battery-cradle`,
+    materials.plasticWhite,
+    parent,
+    { width: 0.236, height: 0.014, depth: 0.062 },
+    new Vector3(0, relativeY(0.09), MICROMOUSE_BLUEPRINT.electronics.batteryLocalZ - 0.078),
+  );
+
+  addBox(
+    scene,
     `${prefix}-battery`,
     materials.battery,
     parent,
-    { width: 0.09, height: 0.044, depth: 0.205 },
-    new Vector3(0.118, relativeY(0.123), MICROMOUSE_BLUEPRINT.electronics.batteryLocalZ),
-    -0.06,
+    { width: 0.21, height: 0.056, depth: 0.046 },
+    new Vector3(0, relativeY(0.126), MICROMOUSE_BLUEPRINT.electronics.batteryLocalZ - 0.078),
   );
   addBox(
     scene,
     `${prefix}-battery-label`,
     materials.batteryLabel,
     parent,
-    { width: 0.07, height: 0.004, depth: 0.112 },
-    new Vector3(0.119, relativeY(0.148), MICROMOUSE_BLUEPRINT.electronics.batteryLocalZ + 0.01),
-    -0.06,
+    { width: 0.148, height: 0.004, depth: 0.03 },
+    new Vector3(0, relativeY(0.156), MICROMOUSE_BLUEPRINT.electronics.batteryLocalZ - 0.078),
   );
   addBox(
     scene,
     `${prefix}-battery-foil`,
     materials.brass,
     parent,
-    { width: 0.092, height: 0.014, depth: 0.035 },
-    new Vector3(0.118, relativeY(0.101), -0.29),
+    { width: 0.024, height: 0.044, depth: 0.048 },
+    new Vector3(0.102, relativeY(0.126), MICROMOUSE_BLUEPRINT.electronics.batteryLocalZ - 0.078),
   );
 
   addBox(
@@ -568,9 +571,9 @@ function addRearDriveTrain(
       materials.ribbon,
       parent,
       [
-        new Vector3(offset, relativeY(0.13), -0.04),
-        new Vector3(offset * 0.65, relativeY(0.158), -0.095),
-        new Vector3(0.018 + offset * 0.35, relativeY(0.15), -0.17),
+        new Vector3(offset, relativeY(0.07), -0.04),
+        new Vector3(offset * 0.65, relativeY(0.108), -0.095),
+        new Vector3(0.018 + offset * 0.35, relativeY(0.1), -0.17),
       ],
       0.0032,
     );
@@ -582,8 +585,9 @@ function addRearDriveTrain(
     materials.wireRed,
     parent,
     [
-      new Vector3(0.075, relativeY(0.153), -0.268),
-      new Vector3(0.05, relativeY(0.174), -0.18),
+      new Vector3(0.092, relativeY(0.148), MICROMOUSE_BLUEPRINT.electronics.batteryLocalZ - 0.078),
+      new Vector3(0.085, relativeY(0.186), -0.25),
+      new Vector3(0.044, relativeY(0.178), -0.11),
       new Vector3(0.022, relativeY(0.145), -0.045),
     ],
     0.005,
@@ -594,8 +598,9 @@ function addRearDriveTrain(
     materials.wireBlack,
     parent,
     [
-      new Vector3(0.155, relativeY(0.15), -0.266),
-      new Vector3(0.116, relativeY(0.17), -0.18),
+      new Vector3(0.112, relativeY(0.13), MICROMOUSE_BLUEPRINT.electronics.batteryLocalZ - 0.078),
+      new Vector3(0.13, relativeY(0.184), -0.25),
+      new Vector3(0.096, relativeY(0.178), -0.11),
       new Vector3(0.072, relativeY(0.143), -0.045),
     ],
     0.005,
@@ -693,6 +698,26 @@ function addBoardElectronics(
       14,
     );
   }
+}
+
+function addCenterOfMassMarker(
+  scene: Scene,
+  materials: MicromouseMaterials,
+  parent: TransformNode,
+  prefix: string,
+): void {
+  const marker = MeshBuilder.CreateSphere(
+    `${prefix}-center-of-mass-marker`,
+    { diameter: 0.026, segments: 12 },
+    scene,
+  );
+  marker.position.set(
+    MICROMOUSE_BLUEPRINT.chassis.centerOfMassOffset.x,
+    MICROMOUSE_BLUEPRINT.chassis.centerOfMassOffset.y,
+    MICROMOUSE_BLUEPRINT.chassis.centerOfMassOffset.z,
+  );
+  marker.material = materials.emitter;
+  marker.parent = parent;
 }
 
 function addSensors(
@@ -846,24 +871,46 @@ function initialPose(maze: MazeSnapshot): { position: Vector3; rotation: Quatern
 }
 
 function createPcbMesh(scene: Scene, name: string): Mesh {
-  const points = boardFootprintPoints();
   const halfHeight = MICROMOUSE_BLUEPRINT.pcb.height / 2;
+
+  return createExtrudedFootprintMesh(scene, name, boardFootprintPoints(), -halfHeight, halfHeight);
+}
+
+function createPcbColliderMesh(scene: Scene, name: string): Mesh {
+  const pcbBottomY =
+    MICROMOUSE_BLUEPRINT.pcb.centerY -
+    MICROMOUSE_BLUEPRINT.pcb.height / 2 -
+    MICROMOUSE_BLUEPRINT.chassis.centerY;
+  const colliderTopY = pcbBottomY + MICROMOUSE_BLUEPRINT.chassis.height;
+
+  return createExtrudedFootprintMesh(scene, name, boardFootprintPoints(), pcbBottomY, colliderTopY);
+}
+
+function createExtrudedFootprintMesh(
+  scene: Scene,
+  name: string,
+  footprint: readonly FootprintPoint[],
+  bottomY: number,
+  topY: number,
+): Mesh {
+  const points = normalizePolygon(footprint);
+  const topTriangles = triangulatePolygon(points);
   const positions: number[] = [];
   const indices: number[] = [];
 
   for (const point of points) {
-    positions.push(point.x, halfHeight, point.z);
+    positions.push(point.x, topY, point.z);
   }
 
   for (const point of points) {
-    positions.push(point.x, -halfHeight, point.z);
+    positions.push(point.x, bottomY, point.z);
   }
 
   const bottomOffset = points.length;
 
-  for (let index = 1; index < points.length - 1; index += 1) {
-    indices.push(0, index + 1, index);
-    indices.push(bottomOffset, bottomOffset + index, bottomOffset + index + 1);
+  for (const [a, b, c] of topTriangles) {
+    indices.push(a, c, b);
+    indices.push(bottomOffset + a, bottomOffset + b, bottomOffset + c);
   }
 
   for (let index = 0; index < points.length; index += 1) {
@@ -886,28 +933,184 @@ function createPcbMesh(scene: Scene, name: string): Mesh {
   return mesh;
 }
 
-function boardFootprintPoints(): { x: number; z: number }[] {
+interface FootprintPoint {
+  readonly x: number;
+  readonly z: number;
+}
+
+export function boardFootprintPoints(): FootprintPoint[] {
   const { pcb } = MICROMOUSE_BLUEPRINT;
   const halfWidth = pcb.width / 2;
-  const points: { x: number; z: number }[] = [
-    { x: -halfWidth, z: pcb.rearZ },
-    { x: halfWidth, z: pcb.rearZ },
-    { x: halfWidth, z: pcb.frontArcCenterZ },
+  const sideIntersectionZ = circleSideIntersectionZ(
+    halfWidth,
+    pcb.frontArcCenterZ,
+    pcb.frontRadius,
+  );
+  const wheelNotch = wheelCutout();
+  const points: FootprintPoint[] = [
+    { x: wheelNotch.innerX, z: pcb.rearZ },
+    { x: wheelNotch.innerX, z: wheelNotch.frontZ },
+    { x: halfWidth, z: wheelNotch.frontZ },
+    { x: halfWidth, z: sideIntersectionZ },
   ];
 
+  const sideAngle = Math.acos(halfWidth / pcb.frontRadius);
+
   for (let index = 1; index < BOARD_ARC_SEGMENTS; index += 1) {
-    const angle = (index / BOARD_ARC_SEGMENTS) * Math.PI;
-    const x = Math.cos(angle) * pcb.frontRadius;
-    if (x > halfWidth || x < -halfWidth) continue;
+    const angle = sideAngle + (index / BOARD_ARC_SEGMENTS) * (Math.PI - sideAngle * 2);
     points.push({
-      x: x,
+      x: Math.cos(angle) * pcb.frontRadius,
       z: pcb.frontArcCenterZ + Math.sin(angle) * pcb.frontRadius,
     });
   }
 
-  points.push({ x: -halfWidth, z: pcb.frontArcCenterZ });
+  points.push(
+    { x: -halfWidth, z: sideIntersectionZ },
+    { x: -halfWidth, z: wheelNotch.frontZ },
+    { x: -wheelNotch.innerX, z: wheelNotch.frontZ },
+    { x: -wheelNotch.innerX, z: pcb.rearZ },
+  );
 
   return points;
+}
+
+function circleSideIntersectionZ(halfWidth: number, centerZ: number, radius: number): number {
+  return centerZ + Math.sqrt(Math.max(0, radius * radius - halfWidth * halfWidth));
+}
+
+function wheelCutout(): { innerX: number; frontZ: number } {
+  const margin = 0.012;
+  const wheel = MICROMOUSE_BLUEPRINT.wheel;
+  const innerX =
+    Math.min(...MICROMOUSE_BLUEPRINT.wheels.map((layout) => Math.abs(layout.localX))) -
+    wheel.width / 2 -
+    margin;
+  const frontZ =
+    Math.max(...MICROMOUSE_BLUEPRINT.wheels.map((layout) => layout.localZ)) + wheel.radius + margin;
+
+  return {
+    innerX,
+    frontZ,
+  };
+}
+
+function normalizePolygon(points: readonly FootprintPoint[]): FootprintPoint[] {
+  const normalized: FootprintPoint[] = [];
+
+  for (const point of points) {
+    const previous = normalized[normalized.length - 1];
+
+    if (previous && Math.hypot(previous.x - point.x, previous.z - point.z) < 0.000001) {
+      continue;
+    }
+
+    normalized.push(point);
+  }
+
+  if (polygonArea(normalized) < 0) {
+    normalized.reverse();
+  }
+
+  return normalized;
+}
+
+function triangulatePolygon(points: readonly FootprintPoint[]): [number, number, number][] {
+  const indices = points.map((_, index) => index);
+  const triangles: [number, number, number][] = [];
+  let guard = 0;
+
+  while (indices.length > 3 && guard < points.length * points.length) {
+    let clipped = false;
+
+    for (let index = 0; index < indices.length; index += 1) {
+      const previousIndex = indices[(index + indices.length - 1) % indices.length];
+      const currentIndex = indices[index];
+      const nextIndex = indices[(index + 1) % indices.length];
+
+      if (!isEar(previousIndex, currentIndex, nextIndex, indices, points)) {
+        continue;
+      }
+
+      triangles.push([previousIndex, currentIndex, nextIndex]);
+      indices.splice(index, 1);
+      clipped = true;
+      break;
+    }
+
+    if (!clipped) {
+      break;
+    }
+
+    guard += 1;
+  }
+
+  if (indices.length === 3) {
+    triangles.push([indices[0], indices[1], indices[2]]);
+  }
+
+  if (triangles.length === 0) {
+    for (let index = 1; index < points.length - 1; index += 1) {
+      triangles.push([0, index, index + 1]);
+    }
+  }
+
+  return triangles;
+}
+
+function isEar(
+  previousIndex: number,
+  currentIndex: number,
+  nextIndex: number,
+  polygonIndices: readonly number[],
+  points: readonly FootprintPoint[],
+): boolean {
+  const previous = points[previousIndex];
+  const current = points[currentIndex];
+  const next = points[nextIndex];
+
+  if (cross2D(previous, current, next) <= 0.0000001) {
+    return false;
+  }
+
+  for (const pointIndex of polygonIndices) {
+    if (pointIndex === previousIndex || pointIndex === currentIndex || pointIndex === nextIndex) {
+      continue;
+    }
+
+    if (pointInTriangle(points[pointIndex], previous, current, next)) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+function pointInTriangle(
+  point: FootprintPoint,
+  a: FootprintPoint,
+  b: FootprintPoint,
+  c: FootprintPoint,
+): boolean {
+  const areaA = cross2D(point, a, b);
+  const areaB = cross2D(point, b, c);
+  const areaC = cross2D(point, c, a);
+  return areaA > 0.0000001 && areaB > 0.0000001 && areaC > 0.0000001;
+}
+
+function cross2D(a: FootprintPoint, b: FootprintPoint, c: FootprintPoint): number {
+  return (b.x - a.x) * (c.z - a.z) - (b.z - a.z) * (c.x - a.x);
+}
+
+function polygonArea(points: readonly FootprintPoint[]): number {
+  let area = 0;
+
+  for (let index = 0; index < points.length; index += 1) {
+    const current = points[index];
+    const next = points[(index + 1) % points.length];
+    area += current.x * next.z - next.x * current.z;
+  }
+
+  return area / 2;
 }
 
 function addBox(
