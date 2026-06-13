@@ -593,7 +593,7 @@ function addRearDriveTrain(
     parent,
     [
       new Vector3(0.092, relativeY(0.148), MICROMOUSE_BLUEPRINT.electronics.batteryLocalZ - 0.078),
-      new Vector3(0.085, relativeY(0.186), -0.25),
+      new Vector3(0.085, relativeY(0.186), -0.22),
       new Vector3(0.044, relativeY(0.178), -0.11),
       new Vector3(0.022, relativeY(0.145), -0.045),
     ],
@@ -606,7 +606,7 @@ function addRearDriveTrain(
     parent,
     [
       new Vector3(0.112, relativeY(0.13), MICROMOUSE_BLUEPRINT.electronics.batteryLocalZ - 0.078),
-      new Vector3(0.13, relativeY(0.184), -0.25),
+      new Vector3(0.12, relativeY(0.184), -0.2),
       new Vector3(0.096, relativeY(0.178), -0.11),
       new Vector3(0.072, relativeY(0.143), -0.045),
     ],

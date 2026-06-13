@@ -57,6 +57,7 @@ const WALL_THICKNESS = 0.08;
 const FLOOR_COLLIDER_THICKNESS = 0.04;
 const PHYSICS_SUB_STEP_MS = 1000 / 120;
 const PHYSICS_STEP_SECONDS = 1 / 120;
+const DRAW_SOLUTION_CELLS = false;
 
 export class BabylonMazeSimulation {
   readonly #host: HTMLElement;
@@ -343,8 +344,10 @@ export class BabylonMazeSimulation {
       this.#addCellMarker("goal-marker", goal, maze, this.#materials.goal, 0.72, 0.024);
     }
 
-    for (const cell of maze.solution) {
-      this.#addCellMarker("solution-cell", cell, maze, this.#materials.path, 0.18, 0.036);
+    if (DRAW_SOLUTION_CELLS) {
+      for (const cell of maze.solution) {
+        this.#addCellMarker("solution-cell", cell, maze, this.#materials.path, 0.18, 0.036);
+      }
     }
 
     this.#createMicromouse(maze);
