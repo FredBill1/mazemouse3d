@@ -27,15 +27,35 @@ export interface MicromouseBlueprint {
     readonly height: number;
     readonly depth: number;
     readonly centerY: number;
+    readonly mass: number;
+    readonly centerOfMassOffset: {
+      readonly x: number;
+      readonly y: number;
+      readonly z: number;
+    };
+  };
+  readonly pcb: {
+    readonly width: number;
+    readonly height: number;
+    readonly centerY: number;
+    readonly rearZ: number;
+    readonly frontArcCenterZ: number;
+    readonly frontRadius: number;
   };
   readonly wheel: {
     readonly radius: number;
     readonly width: number;
+    readonly axleY: number;
     readonly mass: number;
     readonly motorMaxForce: number;
   };
   readonly wheels: readonly WheelBlueprint[];
   readonly sensors: readonly SensorBlueprint[];
+  readonly electronics: {
+    readonly motorLocalZ: number;
+    readonly batteryLocalZ: number;
+    readonly connectorLocalZ: number;
+  };
   readonly motorCount: number;
   readonly gearCount: number;
   readonly chipCount: number;
@@ -44,33 +64,53 @@ export interface MicromouseBlueprint {
 
 export const MICROMOUSE_BLUEPRINT: MicromouseBlueprint = {
   chassis: {
-    width: 0.42,
-    height: 0.05,
-    depth: 0.62,
-    centerY: 0.125,
+    width: 0.49,
+    height: 0.11,
+    depth: 0.68,
+    centerY: 0.105,
+    mass: 0.22,
+    centerOfMassOffset: {
+      x: 0,
+      y: -0.025,
+      z: -0.16,
+    },
+  },
+  pcb: {
+    width: 0.46,
+    height: 0.018,
+    centerY: 0.048,
+    rearZ: -0.32,
+    frontArcCenterZ: 0.17,
+    frontRadius: 0.23,
   },
   wheel: {
-    radius: 0.075,
-    width: 0.05,
-    mass: 0.018,
-    motorMaxForce: 0.26,
+    radius: 0.09,
+    width: 0.068,
+    axleY: 0.09,
+    mass: 0.024,
+    motorMaxForce: 0.34,
   },
   wheels: [
-    { id: "front-left", side: "left", localX: -0.245, localZ: 0.195 },
-    { id: "front-right", side: "right", localX: 0.245, localZ: 0.195 },
-    { id: "rear-left", side: "left", localX: -0.245, localZ: -0.205 },
-    { id: "rear-right", side: "right", localX: 0.245, localZ: -0.205 },
+    { id: "front-left", side: "left", localX: -0.285, localZ: -0.075 },
+    { id: "front-right", side: "right", localX: 0.285, localZ: -0.075 },
+    { id: "rear-left", side: "left", localX: -0.285, localZ: -0.255 },
+    { id: "rear-right", side: "right", localX: 0.285, localZ: -0.255 },
   ],
   sensors: [
-    { id: "front-left", localX: -0.17, localZ: 0.335, yaw: -Math.PI / 5 },
-    { id: "front-center-left", localX: -0.055, localZ: 0.35, yaw: -Math.PI / 18 },
-    { id: "front-center-right", localX: 0.055, localZ: 0.35, yaw: Math.PI / 18 },
-    { id: "front-right", localX: 0.17, localZ: 0.335, yaw: Math.PI / 5 },
-    { id: "left-side", localX: -0.235, localZ: 0.085, yaw: -Math.PI / 2 },
-    { id: "right-side", localX: 0.235, localZ: 0.085, yaw: Math.PI / 2 },
+    { id: "front-left", localX: -0.165, localZ: 0.355, yaw: -Math.PI / 4.6 },
+    { id: "front-center-left", localX: -0.055, localZ: 0.378, yaw: -Math.PI / 18 },
+    { id: "front-center-right", localX: 0.055, localZ: 0.378, yaw: Math.PI / 18 },
+    { id: "front-right", localX: 0.165, localZ: 0.355, yaw: Math.PI / 4.6 },
+    { id: "left-side", localX: -0.21, localZ: 0.12, yaw: -Math.PI / 2 },
+    { id: "right-side", localX: 0.21, localZ: 0.12, yaw: Math.PI / 2 },
   ],
+  electronics: {
+    motorLocalZ: -0.17,
+    batteryLocalZ: -0.19,
+    connectorLocalZ: -0.03,
+  },
   motorCount: 2,
-  gearCount: 2,
+  gearCount: 4,
   chipCount: 1,
   batteryCount: 1,
 };

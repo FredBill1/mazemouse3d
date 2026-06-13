@@ -242,6 +242,99 @@ textarea {
   height: 100%;
 }
 
+.mouse-preview-shell {
+  position: relative;
+  display: grid;
+  grid-template-rows: 48px minmax(0, 1fr);
+  width: 100%;
+  height: 100%;
+  min-width: 320px;
+  min-height: 100%;
+  background: #101318;
+}
+
+.mouse-preview-topbar {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-width: 0;
+  padding: 0 16px;
+  border-bottom: 1px solid #252c34;
+  background: #151a20;
+}
+
+.mouse-preview-back {
+  flex: 0 0 auto;
+  min-height: 30px;
+  padding: 6px 10px;
+  color: #c8d5e1;
+  border: 1px solid #33404b;
+  border-radius: 6px;
+  background: #1a2129;
+  font-size: 12px;
+  line-height: 1.2;
+  text-decoration: none;
+}
+
+.mouse-preview-back:hover {
+  color: #f4f7fa;
+  border-color: #496171;
+}
+
+.mouse-preview-title {
+  min-width: 0;
+  color: #f4f7fa;
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1.2;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mouse-preview-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-rows: repeat(2, minmax(0, 1fr));
+  min-width: 0;
+  min-height: 0;
+  gap: 1px;
+  padding: 1px;
+  background: #252c34;
+}
+
+.mouse-preview-cell {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  background: #0c1014;
+}
+
+.mouse-preview-canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  outline: none;
+}
+
+.mouse-preview-label {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  min-width: 58px;
+  padding: 4px 7px;
+  color: #d9e2ea;
+  border: 1px solid #33404b;
+  border-radius: 6px;
+  background: rgb(16 19 24 / 82%);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.2;
+  text-transform: uppercase;
+  pointer-events: none;
+}
+
 @media (max-width: 760px) {
   .app-shell {
     grid-template-rows: 64px minmax(0, 1fr);
@@ -253,5 +346,14 @@ textarea {
 
   .run-state {
     min-width: 76px;
+  }
+
+  .mouse-preview-shell {
+    grid-template-rows: 48px minmax(0, 1fr);
+  }
+
+  .mouse-preview-grid {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: repeat(4, minmax(280px, 1fr));
   }
 }

@@ -16,8 +16,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Vitest and Rust tests for the first vertical slice.
 - Shared Babylon scene rendering through multiple registered view canvases.
 - Geometric micromouse model with physics-driven wheel constraints and random motor commands.
+- Hash-routed micromouse model preview page with top, side, front, and 45 degree views.
 
 ### Changed
 
 - Converted `crates/maze-gen` into a workspace WASM library crate.
 - Removed plotters-based PNG drawing from the active maze generation crate.
+- Reworked the micromouse into a compact rear-drive layout with a low PCB deck, rear clustered wheels, raised axles, adjusted collision mass, and denser electronic detail.

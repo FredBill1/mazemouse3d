@@ -10,9 +10,33 @@ describe("micromouse model", () => {
     expect(MICROMOUSE_BLUEPRINT.wheels).toHaveLength(4);
     expect(MICROMOUSE_BLUEPRINT.sensors).toHaveLength(6);
     expect(MICROMOUSE_BLUEPRINT.motorCount).toBe(2);
-    expect(MICROMOUSE_BLUEPRINT.gearCount).toBe(2);
+    expect(MICROMOUSE_BLUEPRINT.gearCount).toBe(4);
     expect(MICROMOUSE_BLUEPRINT.chipCount).toBe(1);
     expect(MICROMOUSE_BLUEPRINT.batteryCount).toBe(1);
+  });
+
+  it("keeps the wheel cluster and mass in the rear half of the mouse", () => {
+    const wheelZValues = MICROMOUSE_BLUEPRINT.wheels.map((wheel) => wheel.localZ);
+    const rearWheelZ = Math.min(...wheelZValues);
+    const frontWheelZ = Math.max(...wheelZValues);
+
+    expect(wheelZValues.every((localZ) => localZ < 0)).toBe(true);
+    expect(MICROMOUSE_BLUEPRINT.chassis.centerOfMassOffset.z).toBeGreaterThanOrEqual(rearWheelZ);
+    expect(MICROMOUSE_BLUEPRINT.chassis.centerOfMassOffset.z).toBeLessThanOrEqual(frontWheelZ);
+  });
+
+  it("places the wheel axle above the low PCB deck", () => {
+    const pcbTop = MICROMOUSE_BLUEPRINT.pcb.centerY + MICROMOUSE_BLUEPRINT.pcb.height / 2;
+
+    expect(MICROMOUSE_BLUEPRINT.wheel.axleY).toBeGreaterThan(pcbTop);
+    expect(MICROMOUSE_BLUEPRINT.wheel.axleY - MICROMOUSE_BLUEPRINT.wheel.radius).toBeCloseTo(0);
+  });
+
+  it("keeps sensors forward while drivetrain electronics sit behind the board center", () => {
+    expect(MICROMOUSE_BLUEPRINT.sensors.every((sensor) => sensor.localZ > 0)).toBe(true);
+    expect(MICROMOUSE_BLUEPRINT.electronics.motorLocalZ).toBeLessThan(0);
+    expect(MICROMOUSE_BLUEPRINT.electronics.batteryLocalZ).toBeLessThan(0);
+    expect(MICROMOUSE_BLUEPRINT.electronics.connectorLocalZ).toBeLessThan(0);
   });
 
   it("maps neighboring cells to local +Z based yaw", () => {
