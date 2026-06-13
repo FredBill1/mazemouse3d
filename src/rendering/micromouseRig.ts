@@ -197,7 +197,7 @@ export class MicromouseRig {
     const { chassis } = MICROMOUSE_BLUEPRINT;
     const mesh = MeshBuilder.CreateBox(
       "micromouse-chassis-collider",
-      { width: chassis.width, height: chassis.height, depth: chassis.depth },
+      { width: chassis.colliderWidth, height: chassis.height, depth: chassis.depth },
       this.#scene,
     );
     mesh.position.copyFrom(position);
@@ -372,36 +372,36 @@ function addPcb(
   edge.material = materials.boardEdge;
   edge.parent = parent;
 
-  for (const x of [-0.12, -0.04, 0.04, 0.12]) {
+  for (const x of [0.055, 0.105]) {
     addBox(
       scene,
       `${prefix}-front-silkscreen`,
       materials.silkscreen,
       parent,
-      { width: 0.038, height: 0.002, depth: 0.08 },
-      new Vector3(x, relativeY(pcbTopY() + 0.002), 0.27),
+      { width: 0.034, height: 0.002, depth: 0.062 },
+      new Vector3(x, relativeY(pcbTopY() + 0.002), 0.09),
     );
   }
 
-  for (const z of [0.25, 0.13, 0.01, -0.11]) {
+  for (const z of [0.14, 0.045, -0.045, -0.13]) {
     addBox(
       scene,
       `${prefix}-center-trace`,
       materials.boardTrace,
       parent,
-      { width: 0.006, height: 0.003, depth: 0.12 },
+      { width: 0.006, height: 0.003, depth: 0.095 },
       new Vector3(0, relativeY(pcbTopY() + 0.003), z),
     );
   }
 
-  for (const x of [-0.18, 0.18]) {
+  for (const x of [-0.165, 0.165]) {
     addBox(
       scene,
       `${prefix}-side-trace`,
       materials.boardTrace,
       parent,
-      { width: 0.006, height: 0.003, depth: 0.26 },
-      new Vector3(x, relativeY(pcbTopY() + 0.003), 0.12),
+      { width: 0.006, height: 0.003, depth: 0.18 },
+      new Vector3(x, relativeY(pcbTopY() + 0.003), 0.035),
     );
   }
 }
@@ -412,14 +412,16 @@ function addRearDriveTrain(
   parent: TransformNode,
   prefix: string,
 ): void {
-  for (const axleZ of [-0.255, -0.075]) {
+  const axleZValues = [...new Set(MICROMOUSE_BLUEPRINT.wheels.map((wheel) => wheel.localZ))];
+
+  for (const axleZ of axleZValues) {
     createCylinderAlongX(
       scene,
       `${prefix}-axle-${axleZ}`,
       materials.metal,
       parent,
       0.018,
-      0.52,
+      0.39,
       new Vector3(0, wheelAxleLocalY(), axleZ),
       16,
     );
@@ -431,7 +433,7 @@ function addRearDriveTrain(
         materials.metal,
         parent,
         { width: 0.025, height: 0.055, depth: 0.03 },
-        new Vector3(side * 0.22, relativeY(0.067), axleZ),
+        new Vector3(side * 0.16, relativeY(0.067), axleZ),
       );
     }
   }
@@ -442,29 +444,52 @@ function addRearDriveTrain(
       `${prefix}-side-rail`,
       materials.metal,
       parent,
-      { width: 0.024, height: 0.022, depth: 0.25 },
-      new Vector3(side * 0.22, relativeY(0.084), -0.165),
+      { width: 0.022, height: 0.022, depth: 0.23 },
+      new Vector3(side * 0.165, relativeY(0.084), -0.162),
+    );
+  }
+
+  for (const [index, motorZ] of [
+    MICROMOUSE_BLUEPRINT.electronics.motorLocalZ + 0.055,
+    MICROMOUSE_BLUEPRINT.electronics.motorLocalZ - 0.055,
+  ].entries()) {
+    createCylinderAlongX(
+      scene,
+      `${prefix}-coreless-motor-${index}`,
+      materials.plasticBlack,
+      parent,
+      0.078,
+      0.23,
+      new Vector3(0, relativeY(0.132), motorZ),
+      28,
     );
 
-    const motor = MeshBuilder.CreateCylinder(
-      `${prefix}-coreless-motor`,
-      { diameter: 0.082, height: 0.27, tessellation: 28 },
-      scene,
-    );
-    motor.position.set(side * 0.07, relativeY(0.13), MICROMOUSE_BLUEPRINT.electronics.motorLocalZ);
-    motor.rotationQuaternion = LONGITUDINAL_ALIGNMENT.clone();
-    motor.material = materials.plasticBlack;
-    motor.parent = parent;
+    for (const x of [-0.082, 0.082]) {
+      createCylinderAlongX(
+        scene,
+        `${prefix}-motor-band-${index}`,
+        materials.metal,
+        parent,
+        0.082,
+        0.012,
+        new Vector3(x, relativeY(0.132), motorZ),
+        24,
+      );
+    }
+  }
 
-    const motorBand = MeshBuilder.CreateCylinder(
-      `${prefix}-motor-band`,
-      { diameter: 0.086, height: 0.012, tessellation: 24 },
+  for (const motorZ of [
+    MICROMOUSE_BLUEPRINT.electronics.motorLocalZ + 0.055,
+    MICROMOUSE_BLUEPRINT.electronics.motorLocalZ - 0.055,
+  ]) {
+    addBox(
       scene,
+      `${prefix}-motor-cradle`,
+      materials.plasticWhite,
+      parent,
+      { width: 0.25, height: 0.014, depth: 0.03 },
+      new Vector3(0, relativeY(0.086), motorZ),
     );
-    motorBand.position.set(side * 0.07, relativeY(0.13), -0.07);
-    motorBand.rotationQuaternion = LONGITUDINAL_ALIGNMENT.clone();
-    motorBand.material = materials.metal;
-    motorBand.parent = parent;
   }
 
   for (const layout of MICROMOUSE_BLUEPRINT.wheels) {
@@ -474,9 +499,9 @@ function addRearDriveTrain(
       `${prefix}-drive-gear-${layout.id}`,
       materials.gear,
       parent,
-      0.142,
-      0.02,
-      new Vector3(side * 0.226, wheelAxleLocalY(), layout.localZ),
+      0.128,
+      0.018,
+      new Vector3(side * 0.168, wheelAxleLocalY(), layout.localZ),
       30,
     );
     createCylinderAlongX(
@@ -486,7 +511,7 @@ function addRearDriveTrain(
       parent,
       0.044,
       0.028,
-      new Vector3(side * 0.192, relativeY(0.116), layout.localZ + 0.036),
+      new Vector3(side * 0.145, relativeY(0.116), layout.localZ + 0.034),
       18,
     );
   }
@@ -496,8 +521,8 @@ function addRearDriveTrain(
     `${prefix}-battery`,
     materials.battery,
     parent,
-    { width: 0.104, height: 0.046, depth: 0.238 },
-    new Vector3(0.152, relativeY(0.123), MICROMOUSE_BLUEPRINT.electronics.batteryLocalZ),
+    { width: 0.09, height: 0.044, depth: 0.205 },
+    new Vector3(0.118, relativeY(0.123), MICROMOUSE_BLUEPRINT.electronics.batteryLocalZ),
     -0.06,
   );
   addBox(
@@ -505,8 +530,8 @@ function addRearDriveTrain(
     `${prefix}-battery-label`,
     materials.batteryLabel,
     parent,
-    { width: 0.082, height: 0.004, depth: 0.13 },
-    new Vector3(0.153, relativeY(0.148), MICROMOUSE_BLUEPRINT.electronics.batteryLocalZ + 0.01),
+    { width: 0.07, height: 0.004, depth: 0.112 },
+    new Vector3(0.119, relativeY(0.148), MICROMOUSE_BLUEPRINT.electronics.batteryLocalZ + 0.01),
     -0.06,
   );
   addBox(
@@ -514,8 +539,8 @@ function addRearDriveTrain(
     `${prefix}-battery-foil`,
     materials.brass,
     parent,
-    { width: 0.106, height: 0.014, depth: 0.038 },
-    new Vector3(0.152, relativeY(0.101), -0.302),
+    { width: 0.092, height: 0.014, depth: 0.035 },
+    new Vector3(0.118, relativeY(0.101), -0.29),
   );
 
   addBox(
@@ -523,16 +548,16 @@ function addRearDriveTrain(
     `${prefix}-motor-connector-left`,
     materials.plasticWhite,
     parent,
-    { width: 0.062, height: 0.04, depth: 0.055 },
-    new Vector3(-0.055, relativeY(0.106), MICROMOUSE_BLUEPRINT.electronics.connectorLocalZ),
+    { width: 0.054, height: 0.036, depth: 0.048 },
+    new Vector3(-0.05, relativeY(0.106), MICROMOUSE_BLUEPRINT.electronics.connectorLocalZ),
   );
   addBox(
     scene,
     `${prefix}-motor-connector-right`,
     materials.plasticWhite,
     parent,
-    { width: 0.062, height: 0.04, depth: 0.055 },
-    new Vector3(0.055, relativeY(0.106), MICROMOUSE_BLUEPRINT.electronics.connectorLocalZ),
+    { width: 0.054, height: 0.036, depth: 0.048 },
+    new Vector3(0.05, relativeY(0.106), MICROMOUSE_BLUEPRINT.electronics.connectorLocalZ),
   );
 
   for (let index = 0; index < 6; index += 1) {
@@ -543,9 +568,9 @@ function addRearDriveTrain(
       materials.ribbon,
       parent,
       [
-        new Vector3(offset, relativeY(0.13), -0.035),
-        new Vector3(offset * 0.65, relativeY(0.16), -0.105),
-        new Vector3(0.025 + offset * 0.4, relativeY(0.152), -0.19),
+        new Vector3(offset, relativeY(0.13), -0.04),
+        new Vector3(offset * 0.65, relativeY(0.158), -0.095),
+        new Vector3(0.018 + offset * 0.35, relativeY(0.15), -0.17),
       ],
       0.0032,
     );
@@ -557,9 +582,9 @@ function addRearDriveTrain(
     materials.wireRed,
     parent,
     [
-      new Vector3(0.105, relativeY(0.153), -0.28),
-      new Vector3(0.065, relativeY(0.176), -0.18),
-      new Vector3(0.026, relativeY(0.145), -0.045),
+      new Vector3(0.075, relativeY(0.153), -0.268),
+      new Vector3(0.05, relativeY(0.174), -0.18),
+      new Vector3(0.022, relativeY(0.145), -0.045),
     ],
     0.005,
   );
@@ -569,9 +594,9 @@ function addRearDriveTrain(
     materials.wireBlack,
     parent,
     [
-      new Vector3(0.202, relativeY(0.15), -0.276),
-      new Vector3(0.15, relativeY(0.171), -0.18),
-      new Vector3(0.08, relativeY(0.143), -0.045),
+      new Vector3(0.155, relativeY(0.15), -0.266),
+      new Vector3(0.116, relativeY(0.17), -0.18),
+      new Vector3(0.072, relativeY(0.143), -0.045),
     ],
     0.005,
   );
@@ -588,8 +613,8 @@ function addBoardElectronics(
     `${prefix}-main-chip`,
     materials.chip,
     parent,
-    { width: 0.112, height: 0.018, depth: 0.112 },
-    new Vector3(-0.055, componentY(0.018), 0.14),
+    { width: 0.102, height: 0.018, depth: 0.102 },
+    new Vector3(-0.052, componentY(0.018), 0.07),
   );
 
   for (let index = 0; index < 9; index += 1) {
@@ -617,8 +642,8 @@ function addBoardElectronics(
     `${prefix}-sensor-window`,
     materials.translucent,
     parent,
-    { width: 0.11, height: 0.014, depth: 0.074 },
-    new Vector3(0.055, componentY(0.014), 0.03),
+    { width: 0.1, height: 0.014, depth: 0.062 },
+    new Vector3(0.08, componentY(0.014), 0.02),
   );
 
   for (let index = 0; index < 5; index += 1) {
@@ -627,18 +652,18 @@ function addBoardElectronics(
       `${prefix}-sensor-pad`,
       materials.boardTrace,
       parent,
-      { width: 0.011, height: 0.003, depth: 0.048 },
-      new Vector3(0.018 + index * 0.018, relativeY(pcbTopY() + 0.005), 0.03),
+      { width: 0.01, height: 0.003, depth: 0.04 },
+      new Vector3(0.047 + index * 0.016, relativeY(pcbTopY() + 0.005), 0.02),
     );
   }
 
   const passiveParts = [
-    [-0.17, 0.22, 0.034, 0.012],
-    [-0.12, 0.255, 0.028, 0.014],
-    [-0.01, 0.255, 0.02, 0.012],
-    [0.09, 0.22, 0.032, 0.014],
-    [0.15, 0.17, 0.038, 0.018],
-    [-0.17, 0.075, 0.027, 0.012],
+    [-0.155, 0.135, 0.03, 0.012],
+    [-0.105, 0.16, 0.026, 0.014],
+    [-0.005, 0.16, 0.02, 0.012],
+    [0.085, 0.135, 0.028, 0.014],
+    [0.145, 0.095, 0.034, 0.018],
+    [-0.155, 0.03, 0.026, 0.012],
     [-0.12, -0.005, 0.034, 0.014],
     [0.15, -0.005, 0.032, 0.014],
     [-0.165, -0.115, 0.038, 0.018],
@@ -656,7 +681,7 @@ function addBoardElectronics(
     );
   }
 
-  for (const x of [-0.18, -0.145, 0.135, 0.17]) {
+  for (const x of [-0.16, -0.13, 0.16]) {
     createCylinderAlongZ(
       scene,
       `${prefix}-front-cap`,
@@ -664,7 +689,7 @@ function addBoardElectronics(
       parent,
       0.026,
       0.045,
-      new Vector3(x, componentY(0.026), 0.255),
+      new Vector3(x, componentY(0.026), 0.06),
       14,
     );
   }
@@ -682,7 +707,7 @@ function addSensors(
       `${prefix}-ir-sensor-${sensorLayout.id}`,
       materials.sensor,
       parent,
-      { width: 0.04, height: 0.028, depth: 0.056 },
+      { width: 0.038, height: 0.026, depth: 0.048 },
       new Vector3(sensorLayout.localX, componentY(0.028), sensorLayout.localZ),
       sensorLayout.yaw,
     );
@@ -692,7 +717,7 @@ function addSensors(
       { diameter: 0.016, segments: 10 },
       scene,
     );
-    lens.position.set(0, 0.006, 0.03);
+    lens.position.set(0, 0.0, 0.021);
     lens.material = materials.emitter;
     lens.parent = sensor;
   }
@@ -725,8 +750,8 @@ function createWheelVisualMesh(
   }
 
   const outerSign = layout.side === "left" ? -1 : 1;
-  const outerX = outerSign * (MICROMOUSE_BLUEPRINT.wheel.width / 2 + 0.004);
-  const innerX = -outerSign * (MICROMOUSE_BLUEPRINT.wheel.width / 2 + 0.002);
+  const outerX = outerSign * (MICROMOUSE_BLUEPRINT.wheel.width / 2);
+  const innerX = (-outerSign * MICROMOUSE_BLUEPRINT.wheel.width) / 2;
 
   createCylinderAlongX(
     scene,
@@ -734,7 +759,7 @@ function createWheelVisualMesh(
     materials.hub,
     tire,
     0.132,
-    0.009,
+    0.006,
     new Vector3(outerX, 0, 0),
     28,
   );
@@ -744,7 +769,7 @@ function createWheelVisualMesh(
     materials.wheelSide,
     tire,
     0.142,
-    0.007,
+    0.006,
     new Vector3(innerX, 0, 0),
     28,
   );
@@ -754,8 +779,8 @@ function createWheelVisualMesh(
     materials.metal,
     tire,
     0.044,
-    0.016,
-    new Vector3(outerX + outerSign * 0.006, 0, 0),
+    0.012,
+    new Vector3(outerX + outerSign * 0.003, 0, 0),
     18,
   );
 
@@ -766,7 +791,7 @@ function createWheelVisualMesh(
       { width: 0.005, height: 0.012, depth: 0.096 },
       scene,
     );
-    spoke.position.set(outerX + outerSign * 0.011, 0, 0);
+    spoke.position.set(outerX + outerSign * 0.006, 0, 0);
     spoke.rotationQuaternion = Quaternion.RotationAxis(Vector3.Right(), angle);
     spoke.material = materials.brass;
     spoke.parent = tire;
@@ -872,8 +897,10 @@ function boardFootprintPoints(): { x: number; z: number }[] {
 
   for (let index = 1; index < BOARD_ARC_SEGMENTS; index += 1) {
     const angle = (index / BOARD_ARC_SEGMENTS) * Math.PI;
+    const x = Math.cos(angle) * pcb.frontRadius;
+    if (x > halfWidth || x < -halfWidth) continue;
     points.push({
-      x: Math.cos(angle) * pcb.frontRadius,
+      x: x,
       z: pcb.frontArcCenterZ + Math.sin(angle) * pcb.frontRadius,
     });
   }

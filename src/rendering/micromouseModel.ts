@@ -24,6 +24,7 @@ export interface SensorBlueprint {
 export interface MicromouseBlueprint {
   readonly chassis: {
     readonly width: number;
+    readonly colliderWidth: number;
     readonly height: number;
     readonly depth: number;
     readonly centerY: number;
@@ -64,9 +65,10 @@ export interface MicromouseBlueprint {
 
 export const MICROMOUSE_BLUEPRINT: MicromouseBlueprint = {
   chassis: {
-    width: 0.49,
+    width: 0.47,
+    colliderWidth: 0.31,
     height: 0.11,
-    depth: 0.68,
+    depth: 0.57,
     centerY: 0.105,
     mass: 0.22,
     centerOfMassOffset: {
@@ -79,35 +81,35 @@ export const MICROMOUSE_BLUEPRINT: MicromouseBlueprint = {
     width: 0.46,
     height: 0.018,
     centerY: 0.048,
-    rearZ: -0.32,
-    frontArcCenterZ: 0.17,
-    frontRadius: 0.23,
+    rearZ: -0.31,
+    frontArcCenterZ: -0.05,
+    frontRadius: 0.26,
   },
   wheel: {
     radius: 0.09,
-    width: 0.068,
+    width: 0.056,
     axleY: 0.09,
     mass: 0.024,
     motorMaxForce: 0.34,
   },
   wheels: [
-    { id: "front-left", side: "left", localX: -0.285, localZ: -0.075 },
-    { id: "front-right", side: "right", localX: 0.285, localZ: -0.075 },
-    { id: "rear-left", side: "left", localX: -0.285, localZ: -0.255 },
-    { id: "rear-right", side: "right", localX: 0.285, localZ: -0.255 },
+    { id: "front-left", side: "left", localX: -0.205, localZ: -0.055 },
+    { id: "front-right", side: "right", localX: 0.205, localZ: -0.055 },
+    { id: "rear-left", side: "left", localX: -0.205, localZ: -0.25 },
+    { id: "rear-right", side: "right", localX: 0.205, localZ: -0.25 },
   ],
   sensors: [
-    { id: "front-left", localX: -0.165, localZ: 0.355, yaw: -Math.PI / 4.6 },
-    { id: "front-center-left", localX: -0.055, localZ: 0.378, yaw: -Math.PI / 18 },
-    { id: "front-center-right", localX: 0.055, localZ: 0.378, yaw: Math.PI / 18 },
-    { id: "front-right", localX: 0.165, localZ: 0.355, yaw: Math.PI / 4.6 },
-    { id: "left-side", localX: -0.21, localZ: 0.12, yaw: -Math.PI / 2 },
-    { id: "right-side", localX: 0.21, localZ: 0.12, yaw: Math.PI / 2 },
+    { id: "front-left", localX: -0.13, localZ: 0.154, yaw: -Math.PI / 4.2 },
+    { id: "front-center-left", localX: -0.046, localZ: 0.178, yaw: -Math.PI / 20 },
+    { id: "front-center-right", localX: 0.046, localZ: 0.178, yaw: Math.PI / 20 },
+    { id: "front-right", localX: 0.13, localZ: 0.154, yaw: Math.PI / 4.2 },
+    { id: "left-side", localX: -0.2, localZ: 0.09, yaw: -Math.PI / 2 },
+    { id: "right-side", localX: 0.2, localZ: 0.09, yaw: Math.PI / 2 },
   ],
   electronics: {
-    motorLocalZ: -0.17,
-    batteryLocalZ: -0.19,
-    connectorLocalZ: -0.03,
+    motorLocalZ: -0.16,
+    batteryLocalZ: -0.205,
+    connectorLocalZ: -0.04,
   },
   motorCount: 2,
   gearCount: 4,

@@ -31,35 +31,35 @@ interface PreviewView extends PreviewViewConfig {
   readonly camera: ArcRotateCamera;
 }
 
-const VIEW_TARGET = new Vector3(0, 0.105, 0.02);
+const VIEW_TARGET = new Vector3(0, 0.105, -0.01);
 const VIEW_CONFIGS: readonly PreviewViewConfig[] = [
   {
     id: "top",
     label: "Top",
     position: new Vector3(0, 1.24, 0.02),
-    frameWidth: 0.82,
-    frameHeight: 0.84,
+    frameWidth: 0.64,
+    frameHeight: 0.74,
   },
   {
     id: "side",
     label: "Side",
     position: new Vector3(1.15, 0.11, 0.02),
-    frameWidth: 0.86,
-    frameHeight: 0.36,
+    frameWidth: 0.72,
+    frameHeight: 0.34,
   },
   {
     id: "front",
     label: "Front",
     position: new Vector3(0, 0.11, 1.15),
-    frameWidth: 0.72,
-    frameHeight: 0.36,
+    frameWidth: 0.54,
+    frameHeight: 0.34,
   },
   {
     id: "iso",
     label: "45 Deg",
     position: new Vector3(0.78, 0.58, 0.78),
-    frameWidth: 0.9,
-    frameHeight: 0.68,
+    frameWidth: 0.72,
+    frameHeight: 0.56,
   },
 ];
 

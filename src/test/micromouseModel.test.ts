@@ -19,8 +19,17 @@ describe("micromouse model", () => {
     const wheelZValues = MICROMOUSE_BLUEPRINT.wheels.map((wheel) => wheel.localZ);
     const rearWheelZ = Math.min(...wheelZValues);
     const frontWheelZ = Math.max(...wheelZValues);
+    const outerWheelX =
+      Math.max(...MICROMOUSE_BLUEPRINT.wheels.map((wheel) => Math.abs(wheel.localX))) +
+      MICROMOUSE_BLUEPRINT.wheel.width / 2;
+    const innerWheelX =
+      Math.min(...MICROMOUSE_BLUEPRINT.wheels.map((wheel) => Math.abs(wheel.localX))) -
+      MICROMOUSE_BLUEPRINT.wheel.width / 2;
 
     expect(wheelZValues.every((localZ) => localZ < 0)).toBe(true);
+    expect(outerWheelX).toBeLessThanOrEqual(MICROMOUSE_BLUEPRINT.chassis.width / 2);
+    expect(innerWheelX).toBeGreaterThan(MICROMOUSE_BLUEPRINT.chassis.colliderWidth / 2);
+    expect(frontWheelZ - rearWheelZ).toBeGreaterThan(MICROMOUSE_BLUEPRINT.wheel.radius * 2);
     expect(MICROMOUSE_BLUEPRINT.chassis.centerOfMassOffset.z).toBeGreaterThanOrEqual(rearWheelZ);
     expect(MICROMOUSE_BLUEPRINT.chassis.centerOfMassOffset.z).toBeLessThanOrEqual(frontWheelZ);
   });
@@ -33,7 +42,14 @@ describe("micromouse model", () => {
   });
 
   it("keeps sensors forward while drivetrain electronics sit behind the board center", () => {
+    const boardFront =
+      MICROMOUSE_BLUEPRINT.pcb.frontArcCenterZ + MICROMOUSE_BLUEPRINT.pcb.frontRadius;
+    const boardLength = boardFront - MICROMOUSE_BLUEPRINT.pcb.rearZ;
+    const frontSensorZ = Math.max(...MICROMOUSE_BLUEPRINT.sensors.map((sensor) => sensor.localZ));
+
+    expect(boardLength).toBeLessThan(0.6);
     expect(MICROMOUSE_BLUEPRINT.sensors.every((sensor) => sensor.localZ > 0)).toBe(true);
+    expect(frontSensorZ).toBeLessThan(boardFront);
     expect(MICROMOUSE_BLUEPRINT.electronics.motorLocalZ).toBeLessThan(0);
     expect(MICROMOUSE_BLUEPRINT.electronics.batteryLocalZ).toBeLessThan(0);
     expect(MICROMOUSE_BLUEPRINT.electronics.connectorLocalZ).toBeLessThan(0);

@@ -22,4 +22,4 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - Converted `crates/maze-gen` into a workspace WASM library crate.
 - Removed plotters-based PNG drawing from the active maze generation crate.
-- Reworked the micromouse into a compact rear-drive layout with a low PCB deck, rear clustered wheels, raised axles, adjusted collision mass, and denser electronic detail.
+- Reworked the micromouse into a compact rear-drive layout with a shorter PCB deck, tighter wheel track, raised axles, adjusted collision mass, transverse motors, wheel clearance fixes, and denser electronic detail.
