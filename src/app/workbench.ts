@@ -2,7 +2,7 @@ import { DockviewComponent, type IContentRenderer } from "dockview-core";
 import "dockview-core/dist/styles/dockview.css";
 import type { AppState, AppStateSnapshot } from "./state";
 import type { MazeWorkerClient } from "./mazeWorkerClient";
-import { BabylonMazeViewport, type MazeViewMode } from "../rendering/babylonMazeViewport";
+import { BabylonMazeSimulation, type MazeViewMode } from "../rendering/babylonMazeSimulation";
 
 interface Disposable {
   dispose(): void;
@@ -33,14 +33,16 @@ export function mountWorkbench(
   dockHost.className = "dock-host dockview-theme-dark";
 
   root.append(topbar, dockHost);
+  const simulation = new BabylonMazeSimulation(root, state);
+  void simulation.start();
 
   const dockview = new DockviewComponent(dockHost, {
     createComponent: ({ name }) => {
       switch (name) {
         case "scene-3d":
-          return new BabylonPanel(state, "perspective");
+          return new BabylonPanel(simulation, "perspective");
         case "scene-top":
-          return new BabylonPanel(state, "top");
+          return new BabylonPanel(simulation, "top");
         case "metrics":
           return new MetricsPanel(state, mazeWorker);
         default:
@@ -86,6 +88,7 @@ export function mountWorkbench(
     dispose() {
       unsubscribe();
       dockview.dispose();
+      simulation.dispose();
       root.replaceChildren();
     },
   };
@@ -94,18 +97,17 @@ export function mountWorkbench(
 class BabylonPanel implements IContentRenderer {
   readonly element = document.createElement("div");
   readonly #mode: MazeViewMode;
-  readonly #state: AppState;
-  #viewport: BabylonMazeViewport | null = null;
+  readonly #simulation: BabylonMazeSimulation;
+  #view: Disposable | null = null;
 
-  constructor(state: AppState, mode: MazeViewMode) {
-    this.#state = state;
+  constructor(simulation: BabylonMazeSimulation, mode: MazeViewMode) {
+    this.#simulation = simulation;
     this.#mode = mode;
     this.element.className = "panel-fill";
   }
 
   init(): void {
-    this.#viewport = new BabylonMazeViewport(this.element, this.#state, this.#mode);
-    void this.#viewport.start();
+    this.#view = this.#simulation.attachView(this.element, this.#mode);
   }
 
   layout(): void {
@@ -113,7 +115,7 @@ class BabylonPanel implements IContentRenderer {
   }
 
   dispose(): void {
-    this.#viewport?.dispose();
+    this.#view?.dispose();
   }
 }
 

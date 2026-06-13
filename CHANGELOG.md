@@ -14,6 +14,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Rust WASM maze generation bridge loaded through a Web Worker.
 - npm scripts for dev, preview, build, format, lint, typecheck, and test.
 - Vitest and Rust tests for the first vertical slice.
+- Shared Babylon scene rendering through multiple registered view canvases.
+- Geometric micromouse model with physics-driven wheel constraints and random motor commands.
 
 ### Changed
 
