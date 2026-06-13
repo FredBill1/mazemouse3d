@@ -15,7 +15,7 @@
     "typecheck": "npm run build:wasm:dev && npm run typecheck:ts",
     "typecheck:ts": "tsc --noEmit",
     "build:wasm": "wasm-pack --log-level warn build crates/maze-gen --target web --out-dir ../../src/generated/maze-gen --out-name maze_gen",
-    "build:wasm:dev": "npm run build:wasm -- --dev --no-opt"
+    "build:wasm:dev": "npm run build:wasm -- --no-opt"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
