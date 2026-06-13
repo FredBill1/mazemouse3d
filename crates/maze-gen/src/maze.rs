@@ -1,4 +1,5 @@
-use rand::{rngs::StdRng, RngExt, SeedableRng};
+use rand::{RngExt, SeedableRng, rngs::StdRng};
+use serde::Serialize;
 use std::collections::{HashSet, VecDeque};
 use std::fmt;
 
@@ -10,6 +11,24 @@ const ALL_WALLS: u8 = NORTH | EAST | SOUTH | WEST;
 
 type Edge = (usize, usize);
 
+struct BridgeSearch {
+    tin: Vec<usize>,
+    low: Vec<usize>,
+    timer: usize,
+    bridges: HashSet<Edge>,
+}
+
+impl BridgeSearch {
+    fn new(total: usize) -> Self {
+        Self {
+            tin: vec![0; total],
+            low: vec![0; total],
+            timer: 0,
+            bridges: HashSet::new(),
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct MazeConfig {
     pub size: usize,
@@ -19,7 +38,8 @@ pub struct MazeConfig {
     pub final_temp: f64,
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Metrics {
     pub score: f64,
     pub shortest_path_steps: usize,
@@ -117,7 +137,7 @@ pub struct AnnealedMicromouseMaze {
 
 impl AnnealedMicromouseMaze {
     pub fn new(cfg: MazeConfig) -> Result<Self, String> {
-        if cfg.size < 6 || cfg.size % 2 != 0 {
+        if cfg.size < 6 || !cfg.size.is_multiple_of(2) {
             return Err("size 建议使用偶数且不小于 6，例如 16".into());
         }
 
@@ -167,11 +187,7 @@ impl AnnealedMicromouseMaze {
 
     #[inline]
     fn edge_key(a: usize, b: usize) -> Edge {
-        if a < b {
-            (a, b)
-        } else {
-            (b, a)
-        }
+        if a < b { (a, b) } else { (b, a) }
     }
 
     fn goal_room_edges(&self) -> HashSet<Edge> {
@@ -594,32 +610,23 @@ impl AnnealedMicromouseMaze {
         (penalty, m)
     }
 
-    fn bridge_dfs(
-        &self,
-        walls: &[u8],
-        v: usize,
-        parent: usize,
-        tin: &mut [usize],
-        low: &mut [usize],
-        timer: &mut usize,
-        bridges: &mut HashSet<Edge>,
-    ) {
-        *timer += 1;
-        tin[v] = *timer;
-        low[v] = *timer;
+    fn bridge_dfs(&self, walls: &[u8], v: usize, parent: usize, search: &mut BridgeSearch) {
+        search.timer += 1;
+        search.tin[v] = search.timer;
+        search.low[v] = search.timer;
         let mut neigh = Vec::with_capacity(4);
         self.neighbors_into(walls, v, &mut neigh);
         for nx in neigh {
             if nx == parent {
                 continue;
             }
-            if tin[nx] != 0 {
-                low[v] = low[v].min(tin[nx]);
+            if search.tin[nx] != 0 {
+                search.low[v] = search.low[v].min(search.tin[nx]);
             } else {
-                self.bridge_dfs(walls, nx, v, tin, low, timer, bridges);
-                low[v] = low[v].min(low[nx]);
-                if low[nx] > tin[v] {
-                    bridges.insert(Self::edge_key(v, nx));
+                self.bridge_dfs(walls, nx, v, search);
+                search.low[v] = search.low[v].min(search.low[nx]);
+                if search.low[nx] > search.tin[v] {
+                    search.bridges.insert(Self::edge_key(v, nx));
                 }
             }
         }
@@ -627,29 +634,18 @@ impl AnnealedMicromouseMaze {
 
     fn bridge_stats(&self, walls: &[u8], path: &[usize]) -> (usize, usize, usize, f64) {
         let total = self.size * self.size;
-        let mut tin = vec![0; total];
-        let mut low = vec![0; total];
-        let mut bridges = HashSet::new();
-        let mut timer = 0;
-        self.bridge_dfs(
-            walls,
-            self.start,
-            usize::MAX,
-            &mut tin,
-            &mut low,
-            &mut timer,
-            &mut bridges,
-        );
+        let mut search = BridgeSearch::new(total);
+        self.bridge_dfs(walls, self.start, usize::MAX, &mut search);
 
         let path_bridge_count = path
             .windows(2)
-            .filter(|w| bridges.contains(&Self::edge_key(w[0], w[1])))
+            .filter(|w| search.bridges.contains(&Self::edge_key(w[0], w[1])))
             .count();
         let path_edges = path.len().saturating_sub(1);
         let non_bridge_path_edges = path_edges - path_bridge_count;
         let ratio = path_bridge_count as f64 / path_edges.max(1) as f64;
         (
-            bridges.len(),
+            search.bridges.len(),
             path_bridge_count,
             non_bridge_path_edges,
             ratio,

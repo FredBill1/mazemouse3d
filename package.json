@@ -4,12 +4,34 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "build": "tsc && vite build",
-    "preview": "vite preview"
+    "build": "npm run build:wasm && npm run typecheck:ts && vite build",
+    "check": "npm run format:check && npm run lint && npm run typecheck && npm test",
+    "dev": "npm run build:wasm:dev && vite",
+    "format": "prettier --write . --log-level silent && cargo fmt --all",
+    "format:check": "prettier --check . && cargo fmt --all --check",
+    "lint": "eslint . && cargo clippy --workspace --all-targets -- -D warnings",
+    "preview": "vite preview",
+    "test": "npm run build:wasm:dev && vitest run && cargo test --workspace",
+    "typecheck": "npm run build:wasm:dev && npm run typecheck:ts",
+    "typecheck:ts": "tsc --noEmit",
+    "build:wasm": "wasm-pack --log-level warn build crates/maze-gen --target web --out-dir ../../src/generated/maze-gen --out-name maze_gen",
+    "build:wasm:dev": "npm run build:wasm -- --dev --no-opt"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@vitest/coverage-v8": "^4.1.8",
+    "eslint": "^10.5.0",
+    "eslint-config-prettier": "^10.1.8",
+    "globals": "^17.6.0",
+    "prettier": "^3.8.4",
     "typescript": "~6.0.2",
-    "vite": "^8.0.12"
+    "typescript-eslint": "^8.61.0",
+    "vite": "^8.0.12",
+    "vitest": "^4.1.8"
+  },
+  "dependencies": {
+    "@babylonjs/core": "^9.12.0",
+    "@babylonjs/havok": "^1.3.12",
+    "dockview-core": "^6.6.1"
   }
 }
