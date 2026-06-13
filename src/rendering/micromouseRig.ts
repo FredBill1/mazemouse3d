@@ -21,7 +21,7 @@ import { PhysicsShapeCylinder } from "@babylonjs/core/Physics/v2/physicsShape.js
 import type { MazeSnapshot } from "../domain/maze";
 import { cellCenter } from "./mazeGeometry";
 import { MICROMOUSE_BLUEPRINT, initialMouseYaw, type WheelBlueprint } from "./micromouseModel";
-import { commandMagnitude, type MotorCommand } from "./randomMotorDriver";
+import { commandMagnitude, type MotorCommand, type RobotGroundTruthPose } from "./motorDriver";
 
 interface WheelAssembly {
   readonly layout: WheelBlueprint;
@@ -126,6 +126,13 @@ export class MicromouseRig {
       const target = wheel.layout.side === "left" ? command.leftRadPerSec : command.rightRadPerSec;
       wheel.constraint.setAxisMotorTarget(PhysicsConstraintAxis.ANGULAR_X, target);
     }
+  }
+
+  getGroundTruthPose(): RobotGroundTruthPose {
+    return micromouseGroundTruthPoseFromChassis(
+      this.#chassis.position,
+      this.#chassis.rotationQuaternion ?? Quaternion.Identity(),
+    );
   }
 
   shouldUseRecoveryCommand(command: MotorCommand, deltaSeconds: number): boolean {
@@ -868,6 +875,41 @@ function initialPose(maze: MazeSnapshot): { position: Vector3; rotation: Quatern
     position: new Vector3(start.x, MICROMOUSE_BLUEPRINT.chassis.centerY, start.z),
     rotation: Quaternion.RotationAxis(Vector3.Up(), initialMouseYaw(maze)),
   };
+}
+
+export function micromouseGroundTruthPoseFromChassis(
+  position: Vector3,
+  rotation: Quaternion,
+): RobotGroundTruthPose {
+  const origin = localToWorld(micromouseWheelCenterLocal(), position, rotation);
+  const rotationMatrix = Matrix.FromQuaternionToRef(rotation, Matrix.Identity());
+  const forward = Vector3.TransformNormal(Vector3.Forward(), rotationMatrix);
+
+  return {
+    origin: {
+      x: origin.x,
+      y: origin.y,
+      z: origin.z,
+    },
+    yaw: yawFromRobotForward(forward),
+  };
+}
+
+export function micromouseWheelCenterLocal(): Vector3 {
+  const wheelCount = MICROMOUSE_BLUEPRINT.wheels.length;
+  const sum = MICROMOUSE_BLUEPRINT.wheels.reduce(
+    (acc, wheel) => ({
+      x: acc.x + wheel.localX,
+      z: acc.z + wheel.localZ,
+    }),
+    { x: 0, z: 0 },
+  );
+
+  return new Vector3(sum.x / wheelCount, wheelAxleLocalY(), sum.z / wheelCount);
+}
+
+export function yawFromRobotForward(forward: Pick<Vector3, "x" | "z">): number {
+  return Math.atan2(forward.x, forward.z);
 }
 
 function createPcbMesh(scene: Scene, name: string): Mesh {

@@ -1,10 +1,16 @@
 import { describe, expect, it } from "vitest";
+import { Quaternion, Vector3 } from "@babylonjs/core/Maths/math.vector.js";
 import {
   MICROMOUSE_BLUEPRINT,
   initialMouseYaw,
   yawBetweenCells,
 } from "../rendering/micromouseModel";
-import { boardFootprintPoints } from "../rendering/micromouseRig";
+import {
+  boardFootprintPoints,
+  micromouseGroundTruthPoseFromChassis,
+  micromouseWheelCenterLocal,
+  yawFromRobotForward,
+} from "../rendering/micromouseRig";
 
 describe("micromouse model", () => {
   it("describes the expected visible hardware", () => {
@@ -89,5 +95,30 @@ describe("micromouse model", () => {
   it("uses the first solution step for initial heading", () => {
     expect(initialMouseYaw({ size: 4, start: 0, solution: [0, 1] })).toBeCloseTo(Math.PI / 2);
     expect(initialMouseYaw({ size: 4, start: 0, solution: [0] })).toBe(0);
+  });
+
+  it("uses the four wheel centers as the ground truth pose origin", () => {
+    const wheelCenter = micromouseWheelCenterLocal();
+    const expectedZ =
+      MICROMOUSE_BLUEPRINT.wheels.reduce((sum, wheel) => sum + wheel.localZ, 0) /
+      MICROMOUSE_BLUEPRINT.wheels.length;
+
+    expect(wheelCenter.x).toBeCloseTo(0);
+    expect(wheelCenter.y + MICROMOUSE_BLUEPRINT.chassis.centerY).toBeCloseTo(
+      MICROMOUSE_BLUEPRINT.wheel.axleY,
+    );
+    expect(wheelCenter.z).toBeCloseTo(expectedZ);
+  });
+
+  it("reports ground truth yaw with robot +x along the model front", () => {
+    const pose = micromouseGroundTruthPoseFromChassis(
+      new Vector3(10, MICROMOUSE_BLUEPRINT.chassis.centerY, 20),
+      Quaternion.RotationAxis(Vector3.Up(), Math.PI / 2),
+    );
+
+    expect(pose.yaw).toBeCloseTo(Math.PI / 2);
+    expect(yawFromRobotForward(new Vector3(0, 0, 1))).toBeCloseTo(0);
+    expect(yawFromRobotForward(new Vector3(1, 0, 0))).toBeCloseTo(Math.PI / 2);
+    expect(pose.origin.y).toBeCloseTo(MICROMOUSE_BLUEPRINT.wheel.axleY);
   });
 });

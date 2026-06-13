@@ -1,7 +1,13 @@
-export interface MotorCommand {
-  readonly leftRadPerSec: number;
-  readonly rightRadPerSec: number;
-}
+import {
+  STOPPED_COMMAND,
+  clampMotorCommand,
+  commandMagnitude,
+  createSeededRandom,
+  type MotorCommand,
+} from "./motorDriver";
+
+export type { MotorCommand };
+export { commandMagnitude };
 
 export interface RandomMotorDriverOptions {
   readonly minDurationSeconds: number;
@@ -15,19 +21,14 @@ const DEFAULT_OPTIONS: RandomMotorDriverOptions = {
   maxWheelRadPerSec: 18,
 };
 
-const STOPPED: MotorCommand = {
-  leftRadPerSec: 0,
-  rightRadPerSec: 0,
-};
-
 export class RandomMotorDriver {
   readonly #random: () => number;
   readonly #options: RandomMotorDriverOptions;
   #remainingSeconds = 0;
-  #command: MotorCommand = STOPPED;
+  #command: MotorCommand = STOPPED_COMMAND;
 
   constructor(seed: number, options: Partial<RandomMotorDriverOptions> = {}) {
-    this.#random = seededRandom(seed);
+    this.#random = createSeededRandom(seed);
     this.#options = {
       ...DEFAULT_OPTIONS,
       ...options,
@@ -81,7 +82,7 @@ export class RandomMotorDriver {
     const base = lerp(0.48, 0.9, this.#random()) * this.#options.maxWheelRadPerSec;
     const drift = lerp(-0.12, 0.12, this.#random()) * this.#options.maxWheelRadPerSec;
 
-    return clampCommand(
+    return clampMotorCommand(
       {
         leftRadPerSec: base - drift,
         rightRadPerSec: base + drift,
@@ -111,7 +112,7 @@ export class RandomMotorDriver {
     const speed = lerp(0.28, 0.48, this.#random()) * this.#options.maxWheelRadPerSec;
     const turn = lerp(-0.22, 0.22, this.#random()) * this.#options.maxWheelRadPerSec;
 
-    return clampCommand(
+    return clampMotorCommand(
       {
         leftRadPerSec: -speed - turn,
         rightRadPerSec: -speed + turn,
@@ -129,33 +130,6 @@ export class RandomMotorDriver {
   }
 }
 
-export function commandMagnitude(command: MotorCommand): number {
-  return Math.max(Math.abs(command.leftRadPerSec), Math.abs(command.rightRadPerSec));
-}
-
-function seededRandom(seed: number): () => number {
-  let state = (seed ^ 0x9e3779b9) >>> 0;
-
-  return () => {
-    state = (state + 0x6d2b79f5) >>> 0;
-    let value = state;
-    value = Math.imul(value ^ (value >>> 15), value | 1);
-    value ^= value + Math.imul(value ^ (value >>> 7), value | 61);
-    return ((value ^ (value >>> 14)) >>> 0) / 4294967296;
-  };
-}
-
 function lerp(min: number, max: number, amount: number): number {
   return min + (max - min) * amount;
-}
-
-function clampCommand(command: MotorCommand, maxMagnitude: number): MotorCommand {
-  return {
-    leftRadPerSec: clamp(command.leftRadPerSec, -maxMagnitude, maxMagnitude),
-    rightRadPerSec: clamp(command.rightRadPerSec, -maxMagnitude, maxMagnitude),
-  };
-}
-
-function clamp(value: number, min: number, max: number): number {
-  return Math.min(max, Math.max(min, value));
 }

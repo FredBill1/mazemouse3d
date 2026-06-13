@@ -1,4 +1,5 @@
 import HavokPhysics from "@babylonjs/havok";
+import initMazeNav from "../generated/maze-nav/maze_nav.js";
 import { ArcRotateCamera } from "@babylonjs/core/Cameras/arcRotateCamera.js";
 import { Camera } from "@babylonjs/core/Cameras/camera.js";
 import { Engine } from "@babylonjs/core/Engines/engine.js";
@@ -24,7 +25,8 @@ import {
   createMicromouseMaterials,
   type MicromouseMaterials,
 } from "./micromouseRig";
-import { RandomMotorDriver, type MotorCommand } from "./randomMotorDriver";
+import type { MotorCommand } from "./motorDriver";
+import { PlannedMotorDriver, emitPlannerDebug, plannerDebugEnabled } from "./plannedMotorDriver";
 
 export type MazeViewMode = "perspective" | "top";
 
@@ -71,8 +73,9 @@ export class BabylonMazeSimulation {
   #unsubscribe: (() => void) | null = null;
   #currentMaze: MazeSnapshot | null = null;
   #micromouse: MicromouseRig | null = null;
-  #motorDriver: RandomMotorDriver | null = null;
+  #motorDriver: PlannedMotorDriver | null = null;
   #motorCommand: MotorCommand = { leftRadPerSec: 0, rightRadPerSec: 0 };
+  #plannerDebugControlTicks = 0;
   #disposed = false;
   #started = false;
   #physicsEnabled = false;
@@ -92,6 +95,7 @@ export class BabylonMazeSimulation {
     }
 
     this.#started = true;
+    this.#debugPlannerEvent("simulation-starting");
     this.#engine = new Engine(this.#masterCanvas, true, {
       adaptToDeviceRatio: true,
       antialias: true,
@@ -102,12 +106,14 @@ export class BabylonMazeSimulation {
     this.#materials = createMazeMaterials(this.#scene);
     this.#mouseMaterials = createMicromouseMaterials(this.#scene);
 
-    await this.#enablePhysics();
+    this.#debugPlannerEvent("simulation-loading-wasm");
+    await Promise.all([this.#enablePhysics(), initMazeNav().then(() => undefined)]);
 
     if (this.#disposed || !this.#scene || !this.#engine) {
       return;
     }
 
+    this.#debugPlannerEvent("simulation-started");
     new HemisphericLight("ambient-light", new Vector3(0.2, 1, 0.4), this.#scene).intensity = 0.86;
 
     this.#engine.onBeginFrameObservable.add(() => {
@@ -276,6 +282,12 @@ export class BabylonMazeSimulation {
   }
 
   #renderAppState(snapshot: AppStateSnapshot): void {
+    this.#debugPlannerEvent("simulation-state", {
+      status: snapshot.status,
+      hasMaze: snapshot.maze !== null,
+      sameMaze: snapshot.maze === this.#currentMaze,
+    });
+
     if (!snapshot.maze || snapshot.maze === this.#currentMaze) {
       return;
     }
@@ -387,8 +399,17 @@ export class BabylonMazeSimulation {
 
     this.#micromouse?.dispose();
     this.#micromouse = new MicromouseRig(this.#scene, this.#mouseMaterials, maze);
-    this.#motorDriver = new RandomMotorDriver(maze.seed);
+    this.#motorDriver = new PlannedMotorDriver(maze, { debug: plannerDebugEnabled() });
     this.#motorCommand = { leftRadPerSec: 0, rightRadPerSec: 0 };
+    this.#plannerDebugControlTicks = 0;
+
+    if (plannerDebugEnabled()) {
+      emitPlannerDebug({
+        event: "simulation-micromouse-created",
+        mazeSeed: maze.seed,
+        mazeSize: maze.size,
+      });
+    }
   }
 
   #updateMicromouseControl(): void {
@@ -401,12 +422,37 @@ export class BabylonMazeSimulation {
       return;
     }
 
-    const useRecovery = this.#micromouse.shouldUseRecoveryCommand(
-      this.#motorCommand,
+    this.#motorCommand = this.#motorDriver.next(
       PHYSICS_STEP_SECONDS,
+      this.#micromouse.getGroundTruthPose(),
     );
-    this.#motorCommand = this.#motorDriver.next(PHYSICS_STEP_SECONDS, useRecovery);
     this.#micromouse.setMotorCommand(this.#motorCommand);
+    this.#plannerDebugControlTicks += 1;
+
+    if (
+      plannerDebugEnabled() &&
+      (this.#plannerDebugControlTicks === 1 || this.#plannerDebugControlTicks % 120 === 0)
+    ) {
+      emitPlannerDebug({
+        event: "simulation-control",
+        tick: this.#plannerDebugControlTicks,
+        command: {
+          leftRadPerSec: Math.round(this.#motorCommand.leftRadPerSec * 1000) / 1000,
+          rightRadPerSec: Math.round(this.#motorCommand.rightRadPerSec * 1000) / 1000,
+        },
+      });
+    }
+  }
+
+  #debugPlannerEvent(event: string, details: Record<string, unknown> = {}): void {
+    if (!plannerDebugEnabled()) {
+      return;
+    }
+
+    emitPlannerDebug({
+      event,
+      ...details,
+    });
   }
 
   #addStaticBody(mesh: Mesh, friction: number): void {
