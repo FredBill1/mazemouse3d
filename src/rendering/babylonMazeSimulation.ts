@@ -257,6 +257,7 @@ export class BabylonMazeSimulation {
 
     camera.minZ = 0.01;
     camera.wheelPrecision = 45;
+    camera.mapPanning = true; // disable y-axis panning
 
     if (mode === "top") {
       camera.mode = Camera.ORTHOGRAPHIC_CAMERA;
