@@ -254,22 +254,27 @@ export class BabylonMazeSimulation {
       target,
       this.#scene!,
     );
-
     camera.minZ = 0.01;
-    camera.mapPanning = true; // disable y-axis panning
-    camera.wheelDeltaPercentage = 0.02;
-    camera.pinchDeltaPercentage = 0.001;
-    camera.panningSensibility = 450;
 
     if (mode === "top") {
       camera.mode = Camera.ORTHOGRAPHIC_CAMERA;
-      // no need to calculate aspect ratio for now, #resizeView will be called immediately after #registerView
-      updateTopCamera(camera, size, 1);
     } else {
-      camera.lowerRadiusLimit = 2;
       camera.attachControl(false, false, 1);
+      camera.lowerRadiusLimit = 2;
+      camera.mapPanning = true; // disable y-axis panning
+      camera.panningAxis.set(1, 1, 0);
+      camera.wheelDeltaPercentage = 0.15;
+      camera.pinchDeltaPercentage = 0.015;
+      camera.angularSensibilityX = 300;
+      camera.angularSensibilityY = 300;
+      camera.inertia = 0.05;
+      camera.panningInertia = 0;
+      this.#scene!.onBeforeRenderObservable.add(() => {
+        camera.panningSensibility = 800 / camera.radius;
+        const pitchFactor = Math.max(Math.pow(Math.abs(Math.cos(camera.beta)), 1.5), 1e-6);
+        camera.panningAxis.y = 1 / pitchFactor;
+      });
     }
-
     return camera;
   }
 
