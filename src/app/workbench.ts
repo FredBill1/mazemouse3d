@@ -64,7 +64,6 @@ export function mountWorkbench(
     component: "scene-top",
     position: { referencePanel: scenePanel, direction: "right" },
     initialWidth: 420,
-    minimumWidth: 320,
   });
 
   dockview.addPanel({
@@ -72,8 +71,7 @@ export function mountWorkbench(
     title: "Metrics",
     component: "metrics",
     position: { referencePanel: topPanel, direction: "below" },
-    initialHeight: 260,
-    minimumWidth: 320,
+    initialHeight: 420,
   });
 
   const runState = topbar.querySelector<HTMLElement>("[data-run-state]");
