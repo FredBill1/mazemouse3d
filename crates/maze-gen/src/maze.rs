@@ -36,6 +36,7 @@ pub struct MazeConfig {
     pub iterations: usize,
     pub initial_temp: f64,
     pub final_temp: f64,
+    pub include_score_history: bool,
 }
 
 #[derive(Clone, Debug, Default, Serialize)]
@@ -132,6 +133,7 @@ pub struct AnnealedMicromouseMaze {
     pub solution: Vec<usize>,
     pub metrics: Metrics,
     pub score_history: Vec<f64>,
+    include_score_history: bool,
     protected_edges: HashSet<Edge>,
 }
 
@@ -161,7 +163,12 @@ impl AnnealedMicromouseMaze {
             walls: vec![ALL_WALLS; n * n],
             solution: Vec::new(),
             metrics: Metrics::default(),
-            score_history: Vec::with_capacity(cfg.iterations + 1),
+            score_history: if cfg.include_score_history {
+                Vec::with_capacity(cfg.iterations + 1)
+            } else {
+                Vec::new()
+            },
+            include_score_history: cfg.include_score_history,
             protected_edges: HashSet::new(),
         };
         maze.protected_edges = maze.goal_room_edges();
@@ -791,7 +798,9 @@ impl AnnealedMicromouseMaze {
         let mut best = current.clone();
         let mut best_score = current_score;
         self.score_history.clear();
-        self.score_history.push(best_score);
+        if self.include_score_history {
+            self.score_history.push(best_score);
+        }
 
         for i in 1..=self.iterations {
             let t = i as f64 / self.iterations as f64;
@@ -809,7 +818,9 @@ impl AnnealedMicromouseMaze {
                     }
                 }
             }
-            self.score_history.push(best_score);
+            if self.include_score_history {
+                self.score_history.push(best_score);
+            }
         }
 
         self.walls = best;

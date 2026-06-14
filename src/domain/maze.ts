@@ -13,6 +13,7 @@ export interface MazeConfig {
   readonly iterations?: number;
   readonly initialTemp?: number;
   readonly finalTemp?: number;
+  readonly includeScoreHistory?: boolean;
 }
 
 export interface ResolvedMazeConfig {

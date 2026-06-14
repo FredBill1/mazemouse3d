@@ -9,6 +9,7 @@
     "dev": "npm run build:wasm:dev && vite",
     "format": "prettier --write . --log-level silent && cargo fmt --all",
     "format:check": "prettier --check . && cargo fmt --all --check",
+    "generate:default-maze": "npm run build:wasm:maze-gen && node scripts/generate-default-maze.mjs",
     "lint": "eslint . && cargo clippy --workspace --all-targets -- -D warnings",
     "preview": "vite preview",
     "test": "npm run build:wasm:dev && vitest run && cargo test --workspace",

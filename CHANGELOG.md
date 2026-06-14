@@ -18,6 +18,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Geometric micromouse model with physics-driven wheel constraints and random motor commands.
 - Hash-routed micromouse model preview page with top, side, front, and 45 degree views.
 - Rust WASM half-grid A\* navigation crate and planned micromouse motor driver with pure pursuit.
+- Precomputed default maze data and manual generation script for faster initial page startup.
 
 ### Changed
 
@@ -26,3 +27,4 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Reworked the micromouse into a compact rear-drive layout with a shorter PCB deck, tighter wheel track, raised axles, adjusted collision mass, transverse motors, wheel clearance fixes, and denser electronic detail.
 - Aligned the micromouse PCB visual footprint and chassis collision mesh, including wheel cutouts and rear battery/wire clearance fixes.
 - Replaced the default random micromouse motion with repeated random target planning and path following.
+- Made maze generation score history opt-in to reduce default generation memory and transfer size.

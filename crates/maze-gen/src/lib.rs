@@ -14,6 +14,7 @@ pub struct MazeGenConfig {
     pub iterations: usize,
     pub initial_temp: f64,
     pub final_temp: f64,
+    pub include_score_history: bool,
 }
 
 impl Default for MazeGenConfig {
@@ -24,6 +25,7 @@ impl Default for MazeGenConfig {
             iterations: 6000,
             initial_temp: 20.0,
             final_temp: 0.12,
+            include_score_history: false,
         }
     }
 }
@@ -36,6 +38,7 @@ impl From<MazeGenConfig> for MazeConfig {
             iterations: value.iterations,
             initial_temp: value.initial_temp,
             final_temp: value.final_temp,
+            include_score_history: value.include_score_history,
         }
     }
 }
@@ -100,6 +103,7 @@ mod tests {
             iterations: 120,
             initial_temp: 20.0,
             final_temp: 0.12,
+            include_score_history: false,
         }
     }
 
@@ -133,5 +137,26 @@ mod tests {
                 .last()
                 .is_some_and(|cell| maze.goals.contains(cell))
         );
+    }
+
+    #[test]
+    fn score_history_is_empty_by_default() {
+        let maze = AnnealedMicromouseMaze::new(test_config()).expect("maze should generate");
+        let output = MazeGenOutput::from(maze);
+
+        assert!(output.score_history.is_empty());
+    }
+
+    #[test]
+    fn score_history_can_be_included() {
+        let config = MazeConfig {
+            iterations: 24,
+            include_score_history: true,
+            ..test_config()
+        };
+        let maze = AnnealedMicromouseMaze::new(config).expect("maze should generate");
+        let output = MazeGenOutput::from(maze);
+
+        assert_eq!(output.score_history.len(), config.iterations + 1);
     }
 }
