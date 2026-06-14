@@ -256,13 +256,16 @@ export class BabylonMazeSimulation {
     );
 
     camera.minZ = 0.01;
-    camera.wheelPrecision = 45;
     camera.mapPanning = true; // disable y-axis panning
+    camera.wheelDeltaPercentage = 0.02;
+    camera.pinchDeltaPercentage = 0.001;
+    camera.panningSensibility = 450;
 
     if (mode === "top") {
       camera.mode = Camera.ORTHOGRAPHIC_CAMERA;
       updateTopCamera(camera, size);
     } else {
+      camera.lowerRadiusLimit = 2;
       camera.attachControl(false, false, 1);
     }
 
