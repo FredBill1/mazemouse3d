@@ -263,7 +263,8 @@ export class BabylonMazeSimulation {
 
     if (mode === "top") {
       camera.mode = Camera.ORTHOGRAPHIC_CAMERA;
-      updateTopCamera(camera, size);
+      // no need to calculate aspect ratio for now, #resizeView will be called immediately after #registerView
+      updateTopCamera(camera, size, 1);
     } else {
       camera.lowerRadiusLimit = 2;
       camera.attachControl(false, false, 1);
@@ -283,6 +284,12 @@ export class BabylonMazeSimulation {
     if (canvas.width !== width || canvas.height !== height) {
       canvas.width = width;
       canvas.height = height;
+    }
+
+    const view = [...this.#views].find((candidate) => candidate.canvas === canvas);
+
+    if (view?.mode === "top" && view.camera) {
+      updateTopCamera(view.camera, this.#currentMaze?.size ?? 16, width / height);
     }
   }
 
@@ -369,7 +376,7 @@ export class BabylonMazeSimulation {
 
       if (view.mode === "top") {
         camera.radius = size * 1.05;
-        updateTopCamera(camera, size);
+        updateTopCamera(camera, size, view.canvas.width / Math.max(1, view.canvas.height));
       } else {
         camera.radius = size * 1.45;
       }
@@ -547,12 +554,22 @@ function material(
   return result;
 }
 
-function updateTopCamera(camera: ArcRotateCamera, size: number): void {
+function updateTopCamera(camera: ArcRotateCamera, size: number, aspect: number): void {
   const half = size / 2 + 0.8;
-  camera.orthoLeft = -half;
-  camera.orthoRight = half;
-  camera.orthoBottom = -half;
-  camera.orthoTop = half;
+
+  if (aspect >= 1) {
+    // canvas is tall
+    camera.orthoLeft = -half * aspect;
+    camera.orthoRight = half * aspect;
+    camera.orthoBottom = -half;
+    camera.orthoTop = half;
+  } else {
+    // canvas is wide
+    camera.orthoLeft = -half;
+    camera.orthoRight = half;
+    camera.orthoBottom = -half / aspect;
+    camera.orthoTop = half / aspect;
+  }
 }
 
 function attachPerspectiveInputGuards(canvas: HTMLCanvasElement): () => void {
