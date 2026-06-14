@@ -101,9 +101,14 @@ export class MicromouseRig {
       restitution: 0.02,
       frictionCombine: PhysicsMaterialCombineMode.ARITHMETIC_MEAN,
     };
+    const currentInertia = this.#chassisAggregate.body.getMassProperties().inertia;
+    if (currentInertia === undefined) {
+      throw Error("Expected getMassProperties().inertia to be defined.");
+    }
     this.#chassisAggregate.body.setMassProperties({
       mass: MICROMOUSE_BLUEPRINT.chassis.mass,
       centerOfMass: vectorFromBlueprint(MICROMOUSE_BLUEPRINT.chassis.centerOfMassOffset),
+      inertia: new Vector3(currentInertia.x * 1000, currentInertia.y, currentInertia.z), // prevent wheelie
     });
     this.#chassisAggregate.body.setLinearDamping(0.14);
     this.#chassisAggregate.body.setAngularDamping(0.22);
