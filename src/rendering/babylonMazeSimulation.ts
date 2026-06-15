@@ -248,7 +248,7 @@ export class BabylonMazeSimulation {
     const target = new Vector3(size / 2, 0, size / 2);
     const camera = new ArcRotateCamera(
       `${mode}-camera`,
-      mode === "top" ? -Math.PI / 2 : -Math.PI / 4,
+      mode === "top" ? -Math.PI / 2 : (-Math.PI * 3) / 4,
       mode === "top" ? 0.01 : Math.PI / 3,
       mode === "top" ? size * 1.05 : size * 1.45,
       target,
