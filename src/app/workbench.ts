@@ -52,6 +52,13 @@ export function mountWorkbench(
     disableFloatingGroups: true,
   });
 
+  dockview.layout(dockHost.clientWidth, dockHost.clientHeight);
+  const isVertical = dockHost.clientWidth < dockHost.clientHeight;
+  const topPanelInitialSize = Math.min(
+    420,
+    Math.min(dockHost.clientHeight, dockHost.clientWidth) / 2,
+  );
+
   const scenePanel = dockview.addPanel({
     id: "scene-3d",
     title: "3D Scene",
@@ -62,16 +69,16 @@ export function mountWorkbench(
     id: "scene-top",
     title: "Top View",
     component: "scene-top",
-    position: { referencePanel: scenePanel, direction: "right" },
-    initialWidth: 420,
+    position: { referencePanel: scenePanel, direction: isVertical ? "below" : "right" },
+    initialWidth: topPanelInitialSize,
+    initialHeight: topPanelInitialSize,
   });
 
   dockview.addPanel({
     id: "metrics",
     title: "Metrics",
     component: "metrics",
-    position: { referencePanel: topPanel, direction: "below" },
-    initialHeight: 420,
+    position: { referencePanel: topPanel, direction: isVertical ? "right" : "below" },
   });
 
   const runState = topbar.querySelector<HTMLElement>("[data-run-state]");
