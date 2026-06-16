@@ -1,6 +1,9 @@
+import { Ray } from "@babylonjs/core/Culling/ray.js";
 import { StandardMaterial } from "@babylonjs/core/Materials/standardMaterial.js";
 import { Color3 } from "@babylonjs/core/Maths/math.color.js";
 import { Matrix, Quaternion, Vector3 } from "@babylonjs/core/Maths/math.vector.js";
+import type { IObserver } from "@babylonjs/core/Misc/observable.js";
+import type { AbstractMesh } from "@babylonjs/core/Meshes/abstractMesh.js";
 import { Mesh } from "@babylonjs/core/Meshes/mesh.js";
 import { VertexData } from "@babylonjs/core/Meshes/mesh.vertexData.js";
 import { MeshBuilder } from "@babylonjs/core/Meshes/meshBuilder.js";
@@ -20,7 +23,12 @@ import { PhysicsMaterialCombineMode } from "@babylonjs/core/Physics/v2/physicsMa
 import { PhysicsShapeCylinder } from "@babylonjs/core/Physics/v2/physicsShape.js";
 import type { MazeSnapshot } from "../domain/maze";
 import { cellCenter } from "./mazeGeometry";
-import { MICROMOUSE_BLUEPRINT, initialMouseYaw, type WheelBlueprint } from "./micromouseModel";
+import {
+  MICROMOUSE_BLUEPRINT,
+  initialMouseYaw,
+  type SensorBlueprint,
+  type WheelBlueprint,
+} from "./micromouseModel";
 import { commandMagnitude, type MotorCommand, type RobotGroundTruthPose } from "./motorDriver";
 
 interface WheelAssembly {
@@ -29,6 +37,18 @@ interface WheelAssembly {
   readonly body: PhysicsBody;
   readonly shape: PhysicsShapeCylinder;
   readonly constraint: Physics6DoFConstraint;
+}
+
+interface SensorBeamVisual {
+  readonly beam: Mesh;
+  readonly hit: Mesh;
+  readonly material: StandardMaterial;
+  readonly hitMaterial: StandardMaterial;
+  readonly localOrigin: Vector3;
+  readonly localForwardPoint: Vector3;
+  readonly flickerPhase: number;
+  readonly flickerFrequency: number;
+  readonly jitterFrequency: number;
 }
 
 export interface MicromouseMaterials {
@@ -69,6 +89,12 @@ const ZERO_COMMAND: MotorCommand = {
 const WHEEL_ALIGNMENT = Quaternion.RotationAxis(Vector3.Forward(), -Math.PI / 2);
 const LONGITUDINAL_ALIGNMENT = Quaternion.RotationAxis(Vector3.Right(), Math.PI / 2);
 const BOARD_ARC_SEGMENTS = 18;
+const SENSOR_BEAM_MAX_DISTANCE = 1.4;
+const SENSOR_BEAM_RADIUS = 0.006;
+const SENSOR_BEAM_LENS_OFFSET = 0.032;
+const SENSOR_BEAM_HIT_OFFSET = 0.006;
+const SENSOR_BEAM_HIT_DIAMETER = 0.038;
+const SENSOR_BEAM_MISS_ALPHA_SCALE = 0.34;
 
 export class MicromouseRig {
   readonly #scene: Scene;
@@ -76,6 +102,9 @@ export class MicromouseRig {
   readonly #chassis: Mesh;
   readonly #chassisAggregate: PhysicsAggregate;
   readonly #wheels: WheelAssembly[] = [];
+  readonly #sensorBeams: SensorBeamVisual[] = [];
+  #sensorBeamObserver: IObserver | null = null;
+  #sensorBeamSeconds = 0;
   #slowSeconds = 0;
   #disposed = false;
 
@@ -118,6 +147,7 @@ export class MicromouseRig {
       includeWheels: false,
       namePrefix: "micromouse",
     });
+    this.#addSensorBeams();
     this.#addWheels(pose.position, pose.rotation);
     this.setMotorCommand(ZERO_COMMAND);
   }
@@ -201,6 +231,15 @@ export class MicromouseRig {
     }
 
     this.#wheels.length = 0;
+    this.#sensorBeamObserver?.remove();
+    this.#sensorBeamObserver = null;
+
+    for (const beam of this.#sensorBeams) {
+      beam.beam.dispose(false, true);
+      beam.hit.dispose(false, true);
+    }
+
+    this.#sensorBeams.length = 0;
     this.#chassisAggregate.dispose();
     this.#chassis.dispose(false, true);
   }
@@ -247,6 +286,109 @@ export class MicromouseRig {
         shape,
         constraint,
       });
+    }
+  }
+
+  #addSensorBeams(): void {
+    for (const layout of MICROMOUSE_BLUEPRINT.sensors) {
+      const materialValue = createSensorBeamMaterial(
+        this.#scene,
+        `micromouse-ir-beam-${layout.id}-material`,
+        0.42,
+      );
+      const hitMaterial = createSensorBeamMaterial(
+        this.#scene,
+        `micromouse-ir-hit-${layout.id}-material`,
+        0.72,
+      );
+      const beam = MeshBuilder.CreateTube(
+        `micromouse-ir-beam-${layout.id}`,
+        {
+          path: [Vector3.Zero(), Vector3.Forward().scale(SENSOR_BEAM_MAX_DISTANCE)],
+          radius: SENSOR_BEAM_RADIUS,
+          tessellation: 8,
+          updatable: true,
+        },
+        this.#scene,
+      );
+      beam.material = materialValue;
+      beam.isPickable = false;
+      beam.alwaysSelectAsActiveMesh = true;
+
+      const hit = MeshBuilder.CreateSphere(
+        `micromouse-ir-hit-${layout.id}`,
+        { diameter: SENSOR_BEAM_HIT_DIAMETER, segments: 12 },
+        this.#scene,
+      );
+      hit.material = hitMaterial;
+      hit.isPickable = false;
+      hit.isVisible = false;
+      hit.alwaysSelectAsActiveMesh = true;
+
+      this.#sensorBeams.push({
+        beam,
+        hit,
+        material: materialValue,
+        hitMaterial,
+        localOrigin: sensorBeamLocalOrigin(layout),
+        localForwardPoint: sensorBeamLocalForwardPoint(layout),
+        flickerPhase: Math.random() * Math.PI * 2,
+        flickerFrequency: 8.5 + Math.random() * 7,
+        jitterFrequency: 19 + Math.random() * 17,
+      });
+    }
+
+    this.#sensorBeamObserver = this.#scene.onBeforeRenderObservable.add(() =>
+      this.#updateSensorBeams(),
+    );
+  }
+
+  #updateSensorBeams(): void {
+    if (this.#disposed) {
+      return;
+    }
+
+    const deltaSeconds = Math.min(this.#scene.getEngine().getDeltaTime(), 80) / 1000;
+    this.#sensorBeamSeconds += deltaSeconds;
+    const chassisWorld = this.#chassis.computeWorldMatrix(true);
+
+    for (const visual of this.#sensorBeams) {
+      const origin = Vector3.TransformCoordinates(visual.localOrigin, chassisWorld);
+      const forwardPoint = Vector3.TransformCoordinates(visual.localForwardPoint, chassisWorld);
+      const direction = forwardPoint.subtract(origin).normalize();
+      const ray = new Ray(origin, direction, SENSOR_BEAM_MAX_DISTANCE);
+      const pick = this.#scene.pickWithRay(ray, isSensorBeamTarget);
+      const hitPoint = pick?.hit === true ? pick.pickedPoint : null;
+      const distance =
+        hitPoint && pick
+          ? Math.min(pick.distance, SENSOR_BEAM_MAX_DISTANCE)
+          : SENSOR_BEAM_MAX_DISTANCE;
+      const end = origin.add(direction.scale(distance));
+      const flicker = sensorBeamFlicker(this.#sensorBeamSeconds, visual);
+
+      MeshBuilder.CreateTube(
+        visual.beam.name,
+        {
+          path: [origin, end],
+          radius: SENSOR_BEAM_RADIUS,
+          tessellation: 8,
+          instance: visual.beam,
+        },
+        this.#scene,
+      );
+
+      visual.material.alpha = hitPoint ? flicker : flicker * SENSOR_BEAM_MISS_ALPHA_SCALE;
+
+      if (hitPoint) {
+        visual.hit.isVisible = true;
+        visual.hit.position.copyFrom(hitPoint);
+        visual.hit.position.subtractInPlace(direction.scale(SENSOR_BEAM_HIT_OFFSET));
+        const hitScale = 0.72 + flicker;
+        visual.hit.scaling.set(hitScale, hitScale, hitScale);
+        visual.hitMaterial.alpha = Math.min(0.92, flicker + 0.24);
+      } else {
+        visual.hit.isVisible = false;
+      }
     }
   }
 
@@ -758,6 +900,51 @@ function addSensors(
     lens.material = materials.emitter;
     lens.parent = sensor;
   }
+}
+
+function sensorBeamLocalOrigin(layout: SensorBlueprint): Vector3 {
+  return new Vector3(layout.localX, componentY(0.028), layout.localZ).add(
+    sensorBeamLocalDirection(layout.yaw).scale(SENSOR_BEAM_LENS_OFFSET),
+  );
+}
+
+function sensorBeamLocalForwardPoint(layout: SensorBlueprint): Vector3 {
+  return sensorBeamLocalOrigin(layout).add(sensorBeamLocalDirection(layout.yaw));
+}
+
+function sensorBeamLocalDirection(yaw: number): Vector3 {
+  return new Vector3(Math.sin(yaw), 0, Math.cos(yaw));
+}
+
+function sensorBeamFlicker(seconds: number, visual: SensorBeamVisual): number {
+  const pulse =
+    Math.sin(seconds * visual.flickerFrequency + visual.flickerPhase) * 0.12 +
+    Math.sin(seconds * visual.jitterFrequency + visual.flickerPhase * 1.7) * 0.05 +
+    (Math.random() - 0.5) * 0.08;
+
+  return clamp(0.42 + pulse, 0.22, 0.68);
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, value));
+}
+
+function isSensorBeamTarget(mesh: AbstractMesh): boolean {
+  const metadata = mesh.metadata as { sensorBeamTarget?: boolean } | null | undefined;
+
+  return mesh.isEnabled() && mesh.isVisible && metadata?.sensorBeamTarget === true;
+}
+
+function createSensorBeamMaterial(scene: Scene, name: string, alpha: number): StandardMaterial {
+  const result = new StandardMaterial(name, scene);
+  result.diffuseColor = new Color3(1, 0.02, 0.015);
+  result.emissiveColor = new Color3(1, 0.08, 0.035);
+  result.specularColor = new Color3(0.35, 0.05, 0.04);
+  result.alpha = alpha;
+  result.backFaceCulling = false;
+  result.disableLighting = true;
+
+  return result;
 }
 
 function createWheelVisualMesh(

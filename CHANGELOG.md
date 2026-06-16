@@ -19,6 +19,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Hash-routed micromouse model preview page with top, side, front, and 45 degree views.
 - Rust WASM half-grid A\* navigation crate and planned micromouse motor driver with pure pursuit.
 - Precomputed default maze data and manual generation script for faster initial page startup.
+- Red flickering distance sensor beams with wall hit points in the Babylon.js simulation.
 
 ### Changed
 

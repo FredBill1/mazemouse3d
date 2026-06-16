@@ -331,6 +331,7 @@ export class BabylonMazeSimulation {
     );
     floor.position.set(maze.size / 2, 0, maze.size / 2);
     floor.material = this.#materials.floor;
+    floor.metadata = { sensorBeamTarget: true };
     floor.parent = root;
 
     const floorCollider = MeshBuilder.CreateBox(
@@ -350,6 +351,7 @@ export class BabylonMazeSimulation {
       );
       wall.position.set(segment.centerX, WALL_HEIGHT / 2, segment.centerZ);
       wall.material = this.#materials.wall;
+      wall.metadata = { sensorBeamTarget: true };
       wall.parent = root;
       this.#addStaticBody(wall, 0.82);
     }
