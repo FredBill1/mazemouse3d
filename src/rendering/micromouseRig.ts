@@ -16,6 +16,7 @@ import {
   PhysicsConstraintAxis,
   PhysicsConstraintAxisLimitMode,
   PhysicsConstraintMotorType,
+  PhysicsEventType,
   PhysicsMotionType,
   PhysicsShapeType,
 } from "@babylonjs/core/Physics/v2/IPhysicsEnginePlugin.js";
@@ -29,7 +30,12 @@ import {
   type SensorBlueprint,
   type WheelBlueprint,
 } from "./micromouseModel";
-import { commandMagnitude, type MotorCommand, type RobotGroundTruthPose } from "./motorDriver";
+import {
+  commandMagnitude,
+  type MotorCommand,
+  type RobotGroundTruthPose,
+  type RobotGroundTruthTelemetry,
+} from "./motorDriver";
 
 interface WheelAssembly {
   readonly layout: WheelBlueprint;
@@ -81,6 +87,10 @@ export interface MicromouseDisplayModelOptions {
   readonly namePrefix?: string;
 }
 
+export interface MicromouseRigOptions {
+  readonly onWallCollision?: () => void;
+}
+
 const ZERO_COMMAND: MotorCommand = {
   leftRadPerSec: 0,
   rightRadPerSec: 0,
@@ -101,16 +111,24 @@ export class MicromouseRig {
   readonly #materials: MicromouseMaterials;
   readonly #chassis: Mesh;
   readonly #chassisAggregate: PhysicsAggregate;
+  readonly #onWallCollision: (() => void) | null;
   readonly #wheels: WheelAssembly[] = [];
   readonly #sensorBeams: SensorBeamVisual[] = [];
+  readonly #collisionObservers: IObserver[] = [];
   #sensorBeamObserver: IObserver | null = null;
   #sensorBeamSeconds = 0;
   #slowSeconds = 0;
   #disposed = false;
 
-  constructor(scene: Scene, materials: MicromouseMaterials, maze: MazeSnapshot) {
+  constructor(
+    scene: Scene,
+    materials: MicromouseMaterials,
+    maze: MazeSnapshot,
+    options: MicromouseRigOptions = {},
+  ) {
     this.#scene = scene;
     this.#materials = materials;
+    this.#onWallCollision = options.onWallCollision ?? null;
 
     const pose = initialPose(maze);
     this.#chassis = this.#createChassis(pose.position, pose.rotation);
@@ -130,6 +148,7 @@ export class MicromouseRig {
       restitution: 0.02,
       frictionCombine: PhysicsMaterialCombineMode.ARITHMETIC_MEAN,
     };
+    this.#chassisAggregate.body.disablePreStep = false;
     const currentInertia = this.#chassisAggregate.body.getMassProperties().inertia;
     if (currentInertia === undefined) {
       throw Error("Expected getMassProperties().inertia to be defined.");
@@ -141,6 +160,7 @@ export class MicromouseRig {
     });
     this.#chassisAggregate.body.setLinearDamping(0.14);
     this.#chassisAggregate.body.setAngularDamping(0.22);
+    this.#registerCollisionBody(this.#chassisAggregate.body);
 
     createMicromouseDisplayModel(this.#scene, this.#materials, {
       parent: this.#chassis,
@@ -163,11 +183,73 @@ export class MicromouseRig {
     }
   }
 
+  setGuidedGroundTruthPose(
+    origin: Pick<Vector3, "x" | "y" | "z">,
+    yaw: number,
+    linearVelocity: Pick<Vector3, "x" | "y" | "z">,
+    angularVelocityY: number,
+  ): void {
+    if (this.#disposed) {
+      return;
+    }
+
+    const rotation = Quaternion.RotationAxis(Vector3.Up(), yaw);
+    const wheelCenterOffset = Vector3.TransformCoordinates(
+      micromouseWheelCenterLocal(),
+      Matrix.Compose(Vector3.One(), rotation, Vector3.Zero()),
+    );
+    const chassisPosition = new Vector3(
+      origin.x - wheelCenterOffset.x,
+      MICROMOUSE_BLUEPRINT.chassis.centerY,
+      origin.z - wheelCenterOffset.z,
+    );
+    const linear = new Vector3(linearVelocity.x, linearVelocity.y, linearVelocity.z);
+    const angular = new Vector3(0, angularVelocityY, 0);
+
+    this.#chassisAggregate.body.setLinearVelocity(linear);
+    this.#chassisAggregate.body.setAngularVelocity(angular);
+    this.#chassis.position.copyFrom(chassisPosition);
+    this.#chassis.rotationQuaternion = rotation;
+
+    for (const wheel of this.#wheels) {
+      const wheelPosition = localToWorld(
+        new Vector3(wheel.layout.localX, wheelAxleLocalY(), wheel.layout.localZ),
+        chassisPosition,
+        rotation,
+      );
+
+      wheel.body.setLinearVelocity(linear);
+      wheel.body.setAngularVelocity(angular);
+      wheel.mesh.position.copyFrom(wheelPosition);
+      wheel.mesh.rotationQuaternion = rotation;
+    }
+  }
+
   getGroundTruthPose(): RobotGroundTruthPose {
     return micromouseGroundTruthPoseFromChassis(
       this.#chassis.position,
       this.#chassis.rotationQuaternion ?? Quaternion.Identity(),
     );
+  }
+
+  getGroundTruthTelemetry(): RobotGroundTruthTelemetry {
+    const pose = this.getGroundTruthPose();
+    const linearVelocity = this.#chassisAggregate.body.getLinearVelocity();
+    const angularVelocity = this.#chassisAggregate.body.getAngularVelocity();
+    const rotation = this.#chassis.rotationQuaternion ?? Quaternion.Identity();
+    const euler = rotation.toEulerAngles();
+
+    return {
+      ...pose,
+      eulerAngles: {
+        x: euler.x,
+        y: pose.yaw,
+        z: euler.z,
+      },
+      linearVelocity: vectorToWorldPoint(linearVelocity),
+      angularVelocity: vectorToWorldPoint(angularVelocity),
+      horizontalSpeed: Math.hypot(linearVelocity.x, linearVelocity.z),
+    };
   }
 
   shouldUseRecoveryCommand(command: MotorCommand, deltaSeconds: number): boolean {
@@ -240,6 +322,12 @@ export class MicromouseRig {
     }
 
     this.#sensorBeams.length = 0;
+
+    for (const observer of this.#collisionObservers) {
+      observer.remove();
+    }
+
+    this.#collisionObservers.length = 0;
     this.#chassisAggregate.dispose();
     this.#chassis.dispose(false, true);
   }
@@ -271,9 +359,11 @@ export class MicromouseRig {
         frictionCombine: PhysicsMaterialCombineMode.MAXIMUM,
       };
       body.shape = shape;
+      body.disablePreStep = false;
       body.setMassProperties({ mass: MICROMOUSE_BLUEPRINT.wheel.mass });
       body.setLinearDamping(0.04);
       body.setAngularDamping(0.02);
+      this.#registerCollisionBody(body);
 
       const constraint = this.#createWheelConstraint(layout);
       this.#chassisAggregate.body.addConstraint(body, constraint);
@@ -423,6 +513,24 @@ export class MicromouseRig {
     );
 
     return constraint;
+  }
+
+  #registerCollisionBody(body: PhysicsBody): void {
+    if (!this.#onWallCollision) {
+      return;
+    }
+
+    body.setCollisionCallbackEnabled(true);
+    this.#collisionObservers.push(
+      body.getCollisionObservable().add((event) => {
+        if (
+          event.type === PhysicsEventType.COLLISION_STARTED &&
+          (isWallCollisionBody(event.collider) || isWallCollisionBody(event.collidedAgainst))
+        ) {
+          this.#onWallCollision?.();
+        }
+      }),
+    );
   }
 }
 
@@ -933,6 +1041,20 @@ function isSensorBeamTarget(mesh: AbstractMesh): boolean {
   const metadata = mesh.metadata as { sensorBeamTarget?: boolean } | null | undefined;
 
   return mesh.isEnabled() && mesh.isVisible && metadata?.sensorBeamTarget === true;
+}
+
+function isWallCollisionBody(body: PhysicsBody): boolean {
+  const metadata = body.transformNode.metadata as { collisionRole?: string } | null | undefined;
+
+  return metadata?.collisionRole === "wall";
+}
+
+function vectorToWorldPoint(vector: Vector3): { x: number; y: number; z: number } {
+  return {
+    x: vector.x,
+    y: vector.y,
+    z: vector.z,
+  };
 }
 
 function createSensorBeamMaterial(scene: Scene, name: string, alpha: number): StandardMaterial {

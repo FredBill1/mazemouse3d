@@ -17,9 +17,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Shared Babylon scene rendering through multiple registered view canvases.
 - Geometric micromouse model with physics-driven wheel constraints and random motor commands.
 - Hash-routed micromouse model preview page with top, side, front, and 45 degree views.
-- Rust WASM half-grid A\* navigation crate and planned micromouse motor driver with pure pursuit.
+- Rust WASM half-grid A\* navigation crate and planned micromouse motor driver foundation.
 - Precomputed default maze data and manual generation script for faster initial page startup.
 - Red flickering distance sensor beams with wall hit points in the Babylon.js simulation.
+- Rust WASM DWA local controller running through a dedicated Web Worker.
+- Simulation debug panel with elapsed time, frame rate, DWA frequency, pose, velocity, distance, average speed, worker health, and wall collision metrics.
+- Playwright-based 30 second simulation verification script for speed and collision acceptance.
 
 ### Changed
 
@@ -29,3 +32,5 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Aligned the micromouse PCB visual footprint and chassis collision mesh, including wheel cutouts and rear battery/wire clearance fixes.
 - Replaced the default random micromouse motion with repeated random target planning and path following.
 - Made maze generation score history opt-in to reduce default generation memory and transfer size.
+- Replaced pure pursuit path following with DWA control using the known maze map for high-speed final-run navigation.
+- Raised the micromouse control and physics limits to support faster DWA runs while keeping worker watchdog recovery.

@@ -2,6 +2,7 @@ import { DockviewComponent, type IContentRenderer } from "dockview-core";
 import "dockview-core/dist/styles/dockview.css";
 import type { AppState, AppStateSnapshot } from "./state";
 import type { MazeWorkerClient } from "./mazeWorkerClient";
+import { SimulationDebugStore, type SimulationDebugSnapshot } from "./simulationDebug";
 import { BabylonMazeSimulation, type MazeViewMode } from "../rendering/babylonMazeSimulation";
 
 interface Disposable {
@@ -33,7 +34,8 @@ export function mountWorkbench(
   dockHost.className = "dock-host dockview-theme-dark";
 
   root.append(topbar, dockHost);
-  const simulation = new BabylonMazeSimulation(root, state);
+  const debugStore = new SimulationDebugStore();
+  const simulation = new BabylonMazeSimulation(root, state, debugStore);
   void simulation.start();
 
   const dockview = new DockviewComponent(dockHost, {
@@ -45,6 +47,8 @@ export function mountWorkbench(
           return new BabylonPanel(simulation, "top");
         case "metrics":
           return new MetricsPanel(state, mazeWorker);
+        case "debug":
+          return new DebugPanel(debugStore);
         default:
           return new EmptyPanel(`Unknown panel: ${name}`);
       }
@@ -79,6 +83,14 @@ export function mountWorkbench(
     title: "Metrics",
     component: "metrics",
     position: { referencePanel: topPanel, direction: isVertical ? "right" : "below" },
+  });
+
+  dockview.addPanel({
+    id: "debug",
+    title: "Debug",
+    component: "debug",
+    position: { referencePanel: topPanel, direction: isVertical ? "below" : "right" },
+    initialWidth: 360,
   });
 
   const runState = topbar.querySelector<HTMLElement>("[data-run-state]");
@@ -203,6 +215,93 @@ class EmptyPanel implements IContentRenderer {
   }
 }
 
+class DebugPanel implements IContentRenderer {
+  readonly element = document.createElement("div");
+  readonly #debugStore: SimulationDebugStore;
+  #unsubscribe: (() => void) | null = null;
+
+  constructor(debugStore: SimulationDebugStore) {
+    this.#debugStore = debugStore;
+    this.element.className = "metrics-panel";
+  }
+
+  init(): void {
+    this.#unsubscribe = this.#debugStore.subscribe((snapshot) => this.#render(snapshot));
+  }
+
+  dispose(): void {
+    this.#unsubscribe?.();
+  }
+
+  #render(snapshot: SimulationDebugSnapshot): void {
+    const header = document.createElement("div");
+    header.className = "metrics-header";
+
+    const title = document.createElement("div");
+    title.className = "metrics-title";
+    title.textContent = "Debug";
+    header.append(title);
+
+    const run = metricGrid([
+      ["Elapsed", `${formatNumber(snapshot.elapsedSeconds, 2)} s`],
+      ["FPS", formatNumber(snapshot.fps, 1)],
+      ["DWA Hz", formatNumber(snapshot.dwaHz, 0)],
+      ["Worker", snapshot.workerStatus],
+      ["Restarts", String(snapshot.workerRestartCount)],
+      ["Latency", formatNullable(snapshot.lastWorkerLatencyMs, " ms", 1)],
+      ["Worker error", snapshot.lastWorkerError ?? "none"],
+      ["Distance", formatNumber(snapshot.totalDistance, 2)],
+      ["Average speed", formatNumber(snapshot.averageSpeed, 2)],
+      ["Wall collisions", String(snapshot.wallCollisionCount)],
+    ]);
+
+    const pose = metricGrid([
+      ["Position", formatPoint(snapshot.pose)],
+      ["Yaw", `${formatDegrees(snapshot.yaw)} deg`],
+      ["Angles", formatPointDegrees(snapshot.eulerAngles)],
+      ["Velocity", formatPoint(snapshot.linearVelocity)],
+      ["Speed", formatNumber(snapshot.horizontalSpeed, 2)],
+      ["Angular velocity", formatPoint(snapshot.angularVelocity)],
+    ]);
+
+    const dwa = snapshot.lastDwaDebug
+      ? metricGrid([
+          ["Target cell", String(snapshot.lastDwaDebug.targetCell)],
+          [
+            "Path progress",
+            `${formatNumber(snapshot.lastDwaDebug.pathProgress, 2)} / ${formatNumber(
+              snapshot.lastDwaDebug.pathLength,
+              2,
+            )}`,
+          ],
+          [
+            "Target",
+            `${formatNumber(snapshot.lastDwaDebug.targetX, 2)}, ${formatNumber(
+              snapshot.lastDwaDebug.targetZ,
+              2,
+            )}`,
+          ],
+          ["Clearance", formatNumber(snapshot.lastDwaDebug.clearance, 3)],
+          ["Score", formatNumber(snapshot.lastDwaDebug.score, 2)],
+          [
+            "Candidates",
+            `${snapshot.lastDwaDebug.validCandidates} / ${snapshot.lastDwaDebug.sampledCandidates}`,
+          ],
+          ["Replans", String(snapshot.lastDwaDebug.replanCount)],
+          [
+            "Command",
+            `${formatNumber(snapshot.lastCommand.leftRadPerSec, 1)} / ${formatNumber(
+              snapshot.lastCommand.rightRadPerSec,
+              1,
+            )}`,
+          ],
+        ])
+      : statusBlock("Waiting for DWA telemetry");
+
+    this.element.replaceChildren(header, run, pose, dwa);
+  }
+}
+
 function metricGrid(entries: ReadonlyArray<readonly [label: string, value: string]>): HTMLElement {
   const grid = document.createElement("dl");
   grid.className = "metric-grid";
@@ -226,4 +325,32 @@ function statusBlock(message: string): HTMLElement {
   block.textContent = message;
 
   return block;
+}
+
+function formatNumber(value: number, digits: number): string {
+  return Number.isFinite(value) ? value.toFixed(digits) : "n/a";
+}
+
+function formatNullable(value: number | null, suffix: string, digits: number): string {
+  return value === null ? "n/a" : `${formatNumber(value, digits)}${suffix}`;
+}
+
+function formatPoint(point: {
+  readonly x: number;
+  readonly y: number;
+  readonly z: number;
+}): string {
+  return `${formatNumber(point.x, 2)}, ${formatNumber(point.y, 2)}, ${formatNumber(point.z, 2)}`;
+}
+
+function formatPointDegrees(point: {
+  readonly x: number;
+  readonly y: number;
+  readonly z: number;
+}): string {
+  return `${formatDegrees(point.x)}, ${formatDegrees(point.y)}, ${formatDegrees(point.z)}`;
+}
+
+function formatDegrees(radians: number): string {
+  return formatNumber((radians * 180) / Math.PI, 1);
 }

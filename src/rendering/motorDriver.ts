@@ -14,6 +14,13 @@ export interface RobotGroundTruthPose {
   readonly yaw: number;
 }
 
+export interface RobotGroundTruthTelemetry extends RobotGroundTruthPose {
+  readonly eulerAngles: WorldPoint;
+  readonly linearVelocity: WorldPoint;
+  readonly angularVelocity: WorldPoint;
+  readonly horizontalSpeed: number;
+}
+
 export const STOPPED_COMMAND: MotorCommand = {
   leftRadPerSec: 0,
   rightRadPerSec: 0,

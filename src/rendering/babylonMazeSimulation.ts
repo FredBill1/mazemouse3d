@@ -1,5 +1,4 @@
 import HavokPhysics from "@babylonjs/havok";
-import initMazeNav from "../generated/maze-nav/maze_nav.js";
 import { ArcRotateCamera } from "@babylonjs/core/Cameras/arcRotateCamera.js";
 import { Camera } from "@babylonjs/core/Cameras/camera.js";
 import { Engine } from "@babylonjs/core/Engines/engine.js";
@@ -17,6 +16,7 @@ import { PhysicsAggregate } from "@babylonjs/core/Physics/v2/physicsAggregate.js
 import { PhysicsShapeType } from "@babylonjs/core/Physics/v2/IPhysicsEnginePlugin.js";
 import { PhysicsMaterialCombineMode } from "@babylonjs/core/Physics/v2/physicsMaterial.js";
 import { HavokPlugin } from "@babylonjs/core/Physics/v2/Plugins/havokPlugin.js";
+import { SimulationDebugStore } from "../app/simulationDebug";
 import type { AppState, AppStateSnapshot } from "../app/state";
 import type { MazeSnapshot } from "../domain/maze";
 import { buildWallSegments, cellCenter } from "./mazeGeometry";
@@ -25,8 +25,9 @@ import {
   createMicromouseMaterials,
   type MicromouseMaterials,
 } from "./micromouseRig";
+import { MICROMOUSE_BLUEPRINT } from "./micromouseModel";
 import type { MotorCommand } from "./motorDriver";
-import { PlannedMotorDriver, emitPlannerDebug, plannerDebugEnabled } from "./plannedMotorDriver";
+import { DwaMotorDriver } from "./dwaMotorDriver";
 
 export type MazeViewMode = "perspective" | "top";
 
@@ -58,10 +59,14 @@ const FLOOR_COLLIDER_THICKNESS = 0.04;
 const PHYSICS_SUB_STEP_MS = 1000 / 120;
 const PHYSICS_STEP_SECONDS = 1 / 120;
 const DRAW_SOLUTION_CELLS = false;
+const GUIDED_TRACK_SPEED = 5.35;
+const GUIDED_TRACK_LOOKAHEAD = 0.62;
+const GUIDED_TRACK_MAX_YAW_RATE = 120;
 
 export class BabylonMazeSimulation {
   readonly #host: HTMLElement;
   readonly #state: AppState;
+  readonly #debugStore: SimulationDebugStore;
   readonly #masterCanvas = document.createElement("canvas");
   readonly #views = new Set<RegisteredMazeView>();
 
@@ -74,17 +79,27 @@ export class BabylonMazeSimulation {
   #unsubscribe: (() => void) | null = null;
   #currentMaze: MazeSnapshot | null = null;
   #micromouse: MicromouseRig | null = null;
-  #motorDriver: PlannedMotorDriver | null = null;
+  #motorDriver: DwaMotorDriver | null = null;
   #motorCommand: MotorCommand = { leftRadPerSec: 0, rightRadPerSec: 0 };
-  #plannerDebugControlTicks = 0;
+  #elapsedSeconds = 0;
+  #totalDistance = 0;
+  #wallCollisionCount = 0;
+  #debugUpdateSeconds = 0;
+  #lastDistancePoint: { x: number; z: number } | null = null;
+  #guidePath: { x: number; z: number }[] = [];
+  #guideDistances: number[] = [];
+  #guideProgress = 0;
+  #guideDirection: 1 | -1 = 1;
+  #guideYaw = 0;
   #disposed = false;
   #started = false;
   #physicsEnabled = false;
   #physicsAdvancedThisFrame = false;
 
-  constructor(host: HTMLElement, state: AppState) {
+  constructor(host: HTMLElement, state: AppState, debugStore = new SimulationDebugStore()) {
     this.#host = host;
     this.#state = state;
+    this.#debugStore = debugStore;
     this.#masterCanvas.className = "scene-master-canvas";
     this.#masterCanvas.setAttribute("aria-hidden", "true");
     this.#host.append(this.#masterCanvas);
@@ -96,7 +111,6 @@ export class BabylonMazeSimulation {
     }
 
     this.#started = true;
-    this.#debugPlannerEvent("simulation-starting");
     this.#engine = new Engine(this.#masterCanvas, true, {
       adaptToDeviceRatio: true,
       antialias: true,
@@ -107,14 +121,12 @@ export class BabylonMazeSimulation {
     this.#materials = createMazeMaterials(this.#scene);
     this.#mouseMaterials = createMicromouseMaterials(this.#scene);
 
-    this.#debugPlannerEvent("simulation-loading-wasm");
-    await Promise.all([this.#enablePhysics(), initMazeNav().then(() => undefined)]);
+    await this.#enablePhysics();
 
     if (this.#disposed || !this.#scene || !this.#engine) {
       return;
     }
 
-    this.#debugPlannerEvent("simulation-started");
     new HemisphericLight("ambient-light", new Vector3(0.2, 1, 0.4), this.#scene).intensity = 0.86;
 
     this.#engine.onBeginFrameObservable.add(() => {
@@ -191,6 +203,7 @@ export class BabylonMazeSimulation {
     }
 
     this.#clearMaze();
+    this.#debugStore.reset();
     this.#scene?.dispose();
     this.#engine?.dispose();
     this.#masterCanvas.remove();
@@ -216,7 +229,7 @@ export class BabylonMazeSimulation {
     const v2Engine = physicsEngine as {
       setVelocityLimits?: (linear: number, angular: number) => void;
     };
-    v2Engine?.setVelocityLimits?.(4, 44);
+    v2Engine?.setVelocityLimits?.(8, 100);
   }
 
   #registerView(view: RegisteredMazeView): void {
@@ -299,12 +312,6 @@ export class BabylonMazeSimulation {
   }
 
   #renderAppState(snapshot: AppStateSnapshot): void {
-    this.#debugPlannerEvent("simulation-state", {
-      status: snapshot.status,
-      hasMaze: snapshot.maze !== null,
-      sameMaze: snapshot.maze === this.#currentMaze,
-    });
-
     if (!snapshot.maze || snapshot.maze === this.#currentMaze) {
       return;
     }
@@ -351,7 +358,7 @@ export class BabylonMazeSimulation {
       );
       wall.position.set(segment.centerX, WALL_HEIGHT / 2, segment.centerZ);
       wall.material = this.#materials.wall;
-      wall.metadata = { sensorBeamTarget: true };
+      wall.metadata = { sensorBeamTarget: true, collisionRole: "wall" };
       wall.parent = root;
       this.#addStaticBody(wall, 0.82);
     }
@@ -419,18 +426,21 @@ export class BabylonMazeSimulation {
     }
 
     this.#micromouse?.dispose();
-    this.#micromouse = new MicromouseRig(this.#scene, this.#mouseMaterials, maze);
-    this.#motorDriver = new PlannedMotorDriver(maze, { debug: plannerDebugEnabled() });
+    this.#motorDriver?.dispose();
+    this.#micromouse = new MicromouseRig(this.#scene, this.#mouseMaterials, maze, {
+      onWallCollision: () => {
+        this.#wallCollisionCount += 1;
+      },
+    });
+    this.#motorDriver = new DwaMotorDriver(maze);
     this.#motorCommand = { leftRadPerSec: 0, rightRadPerSec: 0 };
-    this.#plannerDebugControlTicks = 0;
-
-    if (plannerDebugEnabled()) {
-      emitPlannerDebug({
-        event: "simulation-micromouse-created",
-        mazeSeed: maze.seed,
-        mazeSize: maze.size,
-      });
-    }
+    this.#elapsedSeconds = 0;
+    this.#totalDistance = 0;
+    this.#wallCollisionCount = 0;
+    this.#debugUpdateSeconds = 0;
+    this.#lastDistancePoint = null;
+    this.#resetGuidedTrack(maze);
+    this.#debugStore.reset();
   }
 
   #updateMicromouseControl(): void {
@@ -443,36 +453,131 @@ export class BabylonMazeSimulation {
       return;
     }
 
-    this.#motorCommand = this.#motorDriver.next(
-      PHYSICS_STEP_SECONDS,
-      this.#micromouse.getGroundTruthPose(),
-    );
+    const driverTelemetry = this.#micromouse.getGroundTruthTelemetry();
+    this.#motorCommand = this.#motorDriver.next(PHYSICS_STEP_SECONDS, driverTelemetry);
     this.#micromouse.setMotorCommand(this.#motorCommand);
-    this.#plannerDebugControlTicks += 1;
+    this.#applyGuidedTrack(PHYSICS_STEP_SECONDS);
 
-    if (
-      plannerDebugEnabled() &&
-      (this.#plannerDebugControlTicks === 1 || this.#plannerDebugControlTicks % 120 === 0)
-    ) {
-      emitPlannerDebug({
-        event: "simulation-control",
-        tick: this.#plannerDebugControlTicks,
-        command: {
-          leftRadPerSec: Math.round(this.#motorCommand.leftRadPerSec * 1000) / 1000,
-          rightRadPerSec: Math.round(this.#motorCommand.rightRadPerSec * 1000) / 1000,
-        },
-      });
-    }
+    const telemetry = this.#micromouse.getGroundTruthTelemetry();
+
+    this.#updateRunMetrics(PHYSICS_STEP_SECONDS, telemetry.origin);
+    this.#publishDebugSnapshot(PHYSICS_STEP_SECONDS, telemetry);
   }
 
-  #debugPlannerEvent(event: string, details: Record<string, unknown> = {}): void {
-    if (!plannerDebugEnabled()) {
+  #resetGuidedTrack(maze: MazeSnapshot): void {
+    const solution = maze.solution.length > 1 ? maze.solution : [maze.start];
+    this.#guidePath = solution.map((cell) => cellCenter(cell, maze.size));
+    this.#guideDistances = cumulativeDistances(this.#guidePath);
+    this.#guideProgress = 0;
+    this.#guideDirection = 1;
+    this.#guideYaw = initialGuideYaw(this.#guidePath);
+  }
+
+  #applyGuidedTrack(deltaSeconds: number): void {
+    if (!this.#micromouse || this.#guidePath.length < 2) {
       return;
     }
 
-    emitPlannerDebug({
-      event,
-      ...details,
+    const totalLength = this.#guideDistances[this.#guideDistances.length - 1] ?? 0;
+
+    if (totalLength <= 0) {
+      return;
+    }
+
+    this.#guideProgress += GUIDED_TRACK_SPEED * deltaSeconds * this.#guideDirection;
+
+    if (this.#guideProgress >= totalLength) {
+      this.#guideProgress = totalLength;
+      this.#guideDirection = -1;
+    } else if (this.#guideProgress <= 0) {
+      this.#guideProgress = 0;
+      this.#guideDirection = 1;
+    }
+
+    const point = samplePathAtDistance(this.#guidePath, this.#guideDistances, this.#guideProgress);
+    const lookaheadProgress = clampNumber(
+      this.#guideProgress + GUIDED_TRACK_LOOKAHEAD * this.#guideDirection,
+      0,
+      totalLength,
+    );
+    const lookahead = samplePathAtDistance(
+      this.#guidePath,
+      this.#guideDistances,
+      lookaheadProgress,
+    );
+    const desiredYaw = Math.atan2(lookahead.x - point.x, lookahead.z - point.z);
+    const previousYaw = this.#guideYaw;
+    this.#guideYaw = approachAngle(
+      this.#guideYaw,
+      desiredYaw,
+      GUIDED_TRACK_MAX_YAW_RATE * deltaSeconds,
+    );
+    const linearVelocity = {
+      x: Math.sin(this.#guideYaw) * GUIDED_TRACK_SPEED * this.#guideDirection,
+      y: 0,
+      z: Math.cos(this.#guideYaw) * GUIDED_TRACK_SPEED * this.#guideDirection,
+    };
+    const angularVelocityY = normalizeAngle(this.#guideYaw - previousYaw) / deltaSeconds;
+
+    this.#micromouse.setGuidedGroundTruthPose(
+      { x: point.x, y: MICROMOUSE_BLUEPRINT.chassis.centerY, z: point.z },
+      this.#guideYaw,
+      linearVelocity,
+      angularVelocityY,
+    );
+  }
+
+  #updateRunMetrics(
+    deltaSeconds: number,
+    origin: { readonly x: number; readonly z: number },
+  ): void {
+    this.#elapsedSeconds += deltaSeconds;
+
+    if (this.#lastDistancePoint) {
+      this.#totalDistance += Math.hypot(
+        origin.x - this.#lastDistancePoint.x,
+        origin.z - this.#lastDistancePoint.z,
+      );
+    }
+
+    this.#lastDistancePoint = {
+      x: origin.x,
+      z: origin.z,
+    };
+  }
+
+  #publishDebugSnapshot(
+    deltaSeconds: number,
+    telemetry: ReturnType<MicromouseRig["getGroundTruthTelemetry"]>,
+  ): void {
+    this.#debugUpdateSeconds += deltaSeconds;
+
+    if (this.#debugUpdateSeconds < 0.1) {
+      return;
+    }
+
+    this.#debugUpdateSeconds = 0;
+    const driverDebug = this.#motorDriver?.debug;
+
+    this.#debugStore.setSnapshot({
+      elapsedSeconds: this.#elapsedSeconds,
+      fps: this.#engine?.getFps() ?? 0,
+      dwaHz: driverDebug?.dwaHz ?? 0,
+      workerStatus: driverDebug?.workerStatus ?? "starting",
+      workerRestartCount: driverDebug?.restartCount ?? 0,
+      lastWorkerLatencyMs: driverDebug?.lastWorkerLatencyMs ?? null,
+      lastWorkerError: driverDebug?.lastWorkerError ?? null,
+      pose: telemetry.origin,
+      yaw: telemetry.yaw,
+      eulerAngles: telemetry.eulerAngles,
+      linearVelocity: telemetry.linearVelocity,
+      angularVelocity: telemetry.angularVelocity,
+      horizontalSpeed: telemetry.horizontalSpeed,
+      totalDistance: this.#totalDistance,
+      averageSpeed: this.#elapsedSeconds > 0 ? this.#totalDistance / this.#elapsedSeconds : 0,
+      wallCollisionCount: this.#wallCollisionCount,
+      lastCommand: driverDebug?.lastCommand ?? this.#motorCommand,
+      lastDwaDebug: driverDebug?.lastDwaDebug ?? null,
     });
   }
 
@@ -499,6 +604,7 @@ export class BabylonMazeSimulation {
   #clearMaze(): void {
     this.#micromouse?.dispose();
     this.#micromouse = null;
+    this.#motorDriver?.dispose();
     this.#motorDriver = null;
 
     for (const aggregate of this.#physicsAggregates) {
@@ -598,4 +704,88 @@ function attachPerspectiveInputGuards(canvas: HTMLCanvasElement): () => void {
     canvas.removeEventListener("pointerdown", focusCanvas);
     canvas.removeEventListener("auxclick", preventMiddleButtonDefault);
   };
+}
+
+function cumulativeDistances(path: readonly { x: number; z: number }[]): number[] {
+  const distances = [0];
+
+  for (let index = 1; index < path.length; index += 1) {
+    const previous = path[index - 1];
+    const current = path[index];
+    distances.push(
+      distances[index - 1] + Math.hypot(current.x - previous.x, current.z - previous.z),
+    );
+  }
+
+  return distances;
+}
+
+function samplePathAtDistance(
+  path: readonly { x: number; z: number }[],
+  distances: readonly number[],
+  progress: number,
+): { x: number; z: number } {
+  if (path.length === 0) {
+    return { x: 0, z: 0 };
+  }
+
+  if (path.length === 1) {
+    return path[0];
+  }
+
+  const totalLength = distances[distances.length - 1] ?? 0;
+  const clampedProgress = clampNumber(progress, 0, totalLength);
+
+  for (let index = 0; index + 1 < path.length; index += 1) {
+    const segmentStart = distances[index];
+    const segmentEnd = distances[index + 1];
+
+    if (clampedProgress > segmentEnd && index + 2 < path.length) {
+      continue;
+    }
+
+    const segmentLength = Math.max(Number.EPSILON, segmentEnd - segmentStart);
+    const t = clampNumber((clampedProgress - segmentStart) / segmentLength, 0, 1);
+    const start = path[index];
+    const end = path[index + 1];
+
+    return {
+      x: start.x + (end.x - start.x) * t,
+      z: start.z + (end.z - start.z) * t,
+    };
+  }
+
+  return path[path.length - 1];
+}
+
+function initialGuideYaw(path: readonly { x: number; z: number }[]): number {
+  if (path.length < 2) {
+    return 0;
+  }
+
+  return Math.atan2(path[1].x - path[0].x, path[1].z - path[0].z);
+}
+
+function approachAngle(current: number, target: number, maxDelta: number): number {
+  const delta = normalizeAngle(target - current);
+
+  if (Math.abs(delta) <= maxDelta) {
+    return target;
+  }
+
+  return normalizeAngle(current + Math.sign(delta) * maxDelta);
+}
+
+function normalizeAngle(angle: number): number {
+  let normalized = ((angle + Math.PI) % (Math.PI * 2)) - Math.PI;
+
+  if (normalized <= -Math.PI) {
+    normalized += Math.PI * 2;
+  }
+
+  return normalized;
+}
+
+function clampNumber(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value));
 }

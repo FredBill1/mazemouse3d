@@ -88,7 +88,7 @@ export const MICROMOUSE_BLUEPRINT: MicromouseBlueprint = {
     width: 0.056,
     axleY: 0.09,
     mass: 0.024,
-    motorMaxForce: 0.34,
+    motorMaxForce: 4.0,
   },
   wheels: [
     { id: "front-left", side: "left", localX: -0.205, localZ: -0.055 },

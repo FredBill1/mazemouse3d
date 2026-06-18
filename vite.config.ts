@@ -7,6 +7,13 @@ export default defineConfig({
   },
   test: {
     environment: "node",
-    exclude: ["coverage/**", "dist/**", "node_modules/**", "src/generated/**", "target/**"],
+    exclude: [
+      "coverage/**",
+      "dist/**",
+      "node_modules/**",
+      "scripts/**",
+      "src/generated/**",
+      "target/**",
+    ],
   },
 });
