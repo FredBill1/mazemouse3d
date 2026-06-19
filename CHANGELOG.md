@@ -30,3 +30,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Aligned the micromouse PCB visual footprint and chassis collision mesh, including wheel cutouts and rear battery/wire clearance fixes.
 - Replaced the default random micromouse motion with repeated random target planning and path following.
 - Made maze generation score history opt-in to reduce default generation memory and transfer size.
+
+### Fixed
+
+- Count micromouse wheel contacts in the Debug panel wall-hit total.

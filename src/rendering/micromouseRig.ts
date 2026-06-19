@@ -18,7 +18,6 @@ import {
   PhysicsConstraintMotorType,
   PhysicsMotionType,
   PhysicsShapeType,
-  type IPhysicsCollisionEvent,
 } from "@babylonjs/core/Physics/v2/IPhysicsEnginePlugin.js";
 import { PhysicsMaterialCombineMode } from "@babylonjs/core/Physics/v2/physicsMaterial.js";
 import { PhysicsShapeCylinder } from "@babylonjs/core/Physics/v2/physicsShape.js";
@@ -50,10 +49,6 @@ interface SensorBeamVisual {
   readonly flickerPhase: number;
   readonly flickerFrequency: number;
   readonly jitterFrequency: number;
-}
-
-interface Disposable {
-  dispose(): void;
 }
 
 export interface MicromouseMaterials {
@@ -91,12 +86,6 @@ export interface MicromouseDebugKinematics {
   readonly rotationRadians: RobotGroundTruthPose["origin"];
   readonly linearVelocity: RobotGroundTruthPose["origin"];
   readonly angularVelocityRadians: RobotGroundTruthPose["origin"];
-}
-
-export interface MicromouseCollisionEvent {
-  readonly type: IPhysicsCollisionEvent["type"];
-  readonly collidedBodyName: string;
-  readonly collidedMetadata: unknown;
 }
 
 const ZERO_COMMAND: MotorCommand = {
@@ -202,36 +191,8 @@ export class MicromouseRig {
     };
   }
 
-  onCollision(listener: (event: MicromouseCollisionEvent) => void): Disposable {
-    if (this.#disposed) {
-      return { dispose: () => undefined };
-    }
-
-    const registrations = [
-      this.#chassisAggregate.body,
-      ...this.#wheels.map((wheel) => wheel.body),
-    ].map((body) => {
-      body.setCollisionCallbackEnabled(true);
-      return {
-        body,
-        observer: body.getCollisionObservable().add((event) => {
-          listener({
-            type: event.type,
-            collidedBodyName: event.collidedAgainst.transformNode.name,
-            collidedMetadata: event.collidedAgainst.transformNode.metadata,
-          });
-        }),
-      };
-    });
-
-    return {
-      dispose() {
-        for (const { body, observer } of registrations) {
-          body.getCollisionObservable().remove(observer);
-          body.setCollisionCallbackEnabled(false);
-        }
-      },
-    };
+  getCollisionBodies(): readonly PhysicsBody[] {
+    return [this.#chassisAggregate.body, ...this.#wheels.map((wheel) => wheel.body)];
   }
 
   shouldUseRecoveryCommand(command: MotorCommand, deltaSeconds: number): boolean {
