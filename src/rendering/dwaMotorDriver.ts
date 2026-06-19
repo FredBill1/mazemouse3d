@@ -51,6 +51,7 @@ export interface DwaDriverDebugSnapshot {
   readonly lastWorkerLatencyMs: number | null;
   readonly lastWorkerError: string | null;
   readonly dwaHz: number;
+  readonly targetDwaHz: number;
   readonly inFlight: boolean;
   readonly lastCommand: MotorCommand;
   readonly lastDwaDebug: DwaDebugOutput | null;
@@ -62,13 +63,13 @@ export const DEFAULT_DWA_OPTIONS: ResolvedDwaMotorDriverOptions = {
   maxAngularSpeed: 14,
   maxLinearAcceleration: 80,
   maxAngularAcceleration: 92,
-  predictionHorizon: 0.2,
-  rolloutStep: 0.1,
+  predictionHorizon: 0.45,
+  rolloutStep: 1 / 30,
   controlPeriod: 1 / 60,
-  linearSamples: 3,
-  angularSamples: 7,
-  pathLookahead: 0.9,
-  safetyMargin: 0.035,
+  linearSamples: 5,
+  angularSamples: 11,
+  pathLookahead: 0.75,
+  safetyMargin: 0.06,
   arrivalDistance: 0.2,
   wallThickness: 0.08,
   wheelRadius: MICROMOUSE_BLUEPRINT.wheel.radius,
@@ -95,8 +96,10 @@ export class DwaMotorDriver {
   #restartWindowStartedAtMs = 0;
   #restartCount = 0;
   #consecutiveRestarts = 0;
-  #inFlightRequestId: number | null = null;
-  #inFlightSentAtMs = 0;
+  #latestTelemetryRequestId: number | null = null;
+  #lastAcceptedCommandRequestId = 0;
+  #lastTelemetrySentAtMs = 0;
+  #lastCommandResponseAtMs = 0;
   #sendAccumulatorSeconds = 0;
   #latestTelemetry: DwaTelemetrySnapshot | null = null;
   #command: MotorCommand = STOPPED_COMMAND;
@@ -105,6 +108,7 @@ export class DwaMotorDriver {
   #lastWorkerLatencyMs: number | null = null;
   #lastWorkerError: string | null = null;
   #commandResponseTimesMs: number[] = [];
+  #sendTimer: ReturnType<typeof setInterval> | null = null;
   #disposed = false;
 
   constructor(maze: MazeSnapshot, options: DwaMotorDriverOptions = {}) {
@@ -116,6 +120,7 @@ export class DwaMotorDriver {
     };
     this.#workerFactory = workerFactory ?? defaultWorkerFactory;
     this.#startWorker("initial");
+    this.#startSendTimer();
   }
 
   next(deltaSeconds: number, telemetry: DwaTelemetrySnapshot): MotorCommand {
@@ -127,7 +132,7 @@ export class DwaMotorDriver {
     this.#latestTelemetry = telemetry;
     this.#sendAccumulatorSeconds += Math.max(0, deltaSeconds);
     this.#checkWatchdog(now);
-    this.#sendTelemetryIfDue(now);
+    this.#sendTelemetryIfDue(now, false);
 
     return this.#commandForState(deltaSeconds, now);
   }
@@ -145,10 +150,9 @@ export class DwaMotorDriver {
       restartCount: this.#restartCount,
       lastWorkerLatencyMs: this.#lastWorkerLatencyMs,
       lastWorkerError: this.#lastWorkerError,
-      dwaHz: this.#workerReady
-        ? this.#options.targetControlHz
-        : this.#commandResponseTimesMs.length,
-      inFlight: this.#inFlightRequestId !== null,
+      dwaHz: this.#commandResponseTimesMs.length,
+      targetDwaHz: this.#options.targetControlHz,
+      inFlight: false,
       lastCommand: this.#command,
       lastDwaDebug: this.#lastDwaDebug,
     };
@@ -157,7 +161,29 @@ export class DwaMotorDriver {
   dispose(): void {
     this.#disposed = true;
     this.#workerStatus = "disposed";
+    this.#stopSendTimer();
     this.#stopWorker();
+  }
+
+  #startSendTimer(): void {
+    this.#sendTimer = setInterval(() => {
+      if (this.#disposed) {
+        return;
+      }
+
+      const now = nowMs();
+      this.#checkWatchdog(now);
+      this.#sendTelemetryIfDue(now, true);
+    }, 1000 / this.#options.targetControlHz);
+  }
+
+  #stopSendTimer(): void {
+    if (this.#sendTimer === null) {
+      return;
+    }
+
+    clearInterval(this.#sendTimer);
+    this.#sendTimer = null;
   }
 
   #startWorker(reason: "initial" | "watchdog" | "error"): void {
@@ -171,7 +197,10 @@ export class DwaMotorDriver {
     this.#worker.addEventListener("error", this.#handleWorkerError);
     this.#workerReady = false;
     this.#workerStartedAtMs = nowMs();
-    this.#inFlightRequestId = null;
+    this.#latestTelemetryRequestId = null;
+    this.#lastAcceptedCommandRequestId = 0;
+    this.#lastTelemetrySentAtMs = 0;
+    this.#lastCommandResponseAtMs = this.#workerStartedAtMs;
     this.#workerStatus = reason === "initial" ? "starting" : "restarting";
 
     if (reason !== "initial") {
@@ -202,8 +231,8 @@ export class DwaMotorDriver {
     });
   }
 
-  #sendTelemetryIfDue(now: number): void {
-    if (!this.#worker || !this.#workerReady || this.#inFlightRequestId !== null) {
+  #sendTelemetryIfDue(now: number, force: boolean): void {
+    if (!this.#worker || !this.#workerReady) {
       return;
     }
 
@@ -215,14 +244,18 @@ export class DwaMotorDriver {
 
     const intervalSeconds = 1 / this.#options.targetControlHz;
 
-    if (this.#sendAccumulatorSeconds < intervalSeconds && this.#commandResponseTimesMs.length > 0) {
+    if (
+      !force &&
+      this.#sendAccumulatorSeconds < intervalSeconds &&
+      this.#commandResponseTimesMs.length > 0
+    ) {
       return;
     }
 
     this.#sendAccumulatorSeconds = 0;
     const requestId = this.#nextRequestId();
-    this.#inFlightRequestId = requestId;
-    this.#inFlightSentAtMs = now;
+    this.#latestTelemetryRequestId = requestId;
+    this.#lastTelemetrySentAtMs = now;
     this.#worker.postMessage({
       type: "telemetry",
       requestId,
@@ -232,8 +265,11 @@ export class DwaMotorDriver {
 
   #checkWatchdog(now: number): void {
     if (
-      this.#inFlightRequestId !== null &&
-      now - this.#inFlightSentAtMs > this.#options.commandTimeoutMs
+      this.#workerReady &&
+      this.#latestTelemetry !== null &&
+      this.#lastTelemetrySentAtMs > 0 &&
+      now - this.#lastCommandResponseAtMs > this.#options.commandTimeoutMs &&
+      now - this.#lastTelemetrySentAtMs > this.#options.commandTimeoutMs
     ) {
       this.#startWorker("watchdog");
       return;
@@ -313,6 +349,7 @@ export class DwaMotorDriver {
     if (response.type === "ready") {
       this.#workerReady = true;
       this.#workerStatus = "ready";
+      this.#lastCommandResponseAtMs = now;
       return;
     }
 
@@ -322,15 +359,21 @@ export class DwaMotorDriver {
       return;
     }
 
-    if (response.requestId !== this.#inFlightRequestId) {
+    if (
+      this.#latestTelemetryRequestId === null ||
+      response.requestId > this.#latestTelemetryRequestId ||
+      response.requestId < this.#lastAcceptedCommandRequestId
+    ) {
       return;
     }
 
+    this.#lastAcceptedCommandRequestId = response.requestId;
     this.#command = sanitizeCommand(response.command, this.#options.maxWheelRadPerSec);
     this.#lastDwaDebug = response.command.debug;
     this.#lastWorkerError = null;
-    this.#lastWorkerLatencyMs = now - this.#inFlightSentAtMs;
-    this.#inFlightRequestId = null;
+    this.#lastWorkerLatencyMs =
+      this.#lastTelemetrySentAtMs > 0 ? now - this.#lastTelemetrySentAtMs : null;
+    this.#lastCommandResponseAtMs = now;
     this.#workerStatus = "ready";
     this.#consecutiveRestarts = 0;
     this.#restartWindowStartedAtMs = 0;

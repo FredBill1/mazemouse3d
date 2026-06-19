@@ -6,6 +6,7 @@ export interface SimulationDebugSnapshot {
   readonly elapsedSeconds: number;
   readonly fps: number;
   readonly dwaHz: number;
+  readonly targetDwaHz: number;
   readonly workerStatus: DwaWorkerStatus;
   readonly workerRestartCount: number;
   readonly lastWorkerLatencyMs: number | null;
@@ -19,6 +20,7 @@ export interface SimulationDebugSnapshot {
   readonly totalDistance: number;
   readonly averageSpeed: number;
   readonly wallCollisionCount: number;
+  readonly resetCount: number;
   readonly lastCommand: MotorCommand;
   readonly lastDwaDebug: DwaDebugOutput | null;
 }
@@ -32,6 +34,7 @@ export const EMPTY_SIMULATION_DEBUG: SimulationDebugSnapshot = {
   elapsedSeconds: 0,
   fps: 0,
   dwaHz: 0,
+  targetDwaHz: 0,
   workerStatus: "starting",
   workerRestartCount: 0,
   lastWorkerLatencyMs: null,
@@ -45,6 +48,7 @@ export const EMPTY_SIMULATION_DEBUG: SimulationDebugSnapshot = {
   totalDistance: 0,
   averageSpeed: 0,
   wallCollisionCount: 0,
+  resetCount: 0,
   lastCommand: ZERO_COMMAND,
   lastDwaDebug: null,
 };

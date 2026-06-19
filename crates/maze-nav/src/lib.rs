@@ -21,8 +21,10 @@ const DEFAULT_ROBOT_REAR_EXTENT: f64 = 0.17;
 const OFF_PATH_REPLAN_DISTANCE: f64 = 0.7;
 const CANDIDATE_MAX_PATH_DISTANCE: f64 = 0.9;
 const BROAD_PHASE_CLEARANCE: f64 = 0.85;
+const WALL_BIN_SEARCH_PADDING: f64 = 0.58;
+const MIN_ROLLOUT_CLEARANCE: f64 = 0.035;
 const RECOVERY_GRACE_SECONDS: f64 = 0.16;
-const RECOVERY_CLEARANCE: f64 = 0.45;
+const RECOVERY_CLEARANCE: f64 = 0.03;
 const RECOVERY_REVERSE_SPEED: f64 = -1.45;
 
 const HEADING_DELTAS: [(i32, i32); HEADING_COUNT] = [
@@ -198,13 +200,13 @@ impl Default for DwaOptions {
             max_angular_speed: 14.0,
             max_linear_acceleration: 80.0,
             max_angular_acceleration: 92.0,
-            prediction_horizon: 0.2,
-            rollout_step: 0.1,
+            prediction_horizon: 0.45,
+            rollout_step: 1.0 / 30.0,
             control_period: 1.0 / 60.0,
-            linear_samples: 3,
-            angular_samples: 7,
-            path_lookahead: 0.9,
-            safety_margin: 0.035,
+            linear_samples: 5,
+            angular_samples: 11,
+            path_lookahead: 0.75,
+            safety_margin: 0.06,
             arrival_distance: 0.2,
             wall_thickness: DEFAULT_WALL_THICKNESS,
             wheel_radius: DEFAULT_WHEEL_RADIUS,
@@ -291,6 +293,7 @@ pub struct DwaController {
     walls: Vec<u8>,
     options: DwaOptions,
     wall_rects: Vec<WallRect>,
+    wall_bins: Vec<Vec<usize>>,
     solution: Vec<usize>,
     random_state: u32,
     target_cell: usize,
@@ -331,8 +334,9 @@ impl DwaController {
 
         let options = DwaOptions::from_input(config.options);
         let wall_rects = build_wall_rects(config.size, &config.walls, options.wall_thickness);
-        let fallback_target = config
-            .solution
+        let wall_bins = build_wall_bins(config.size, &wall_rects);
+        let solution = sprint_solution(config.size, &config.walls, config.solution);
+        let fallback_target = solution
             .last()
             .copied()
             .unwrap_or(config.size * config.size - 1);
@@ -342,7 +346,8 @@ impl DwaController {
             walls: config.walls,
             options,
             wall_rects,
-            solution: config.solution,
+            wall_bins,
+            solution,
             random_state: config.seed ^ 0x9e37_79b9,
             target_cell: fallback_target,
             path: Vec::new(),
@@ -400,8 +405,9 @@ impl DwaController {
             window_w,
             target,
         );
-        let candidate =
-            candidate.unwrap_or_else(|| self.braking_candidate(current_v, current_w, target));
+        let candidate = candidate
+            .filter(|candidate| candidate.v.abs() > 0.45 || candidate.score > 0.0)
+            .unwrap_or_else(|| self.progress_fallback_candidate(telemetry, target));
         let (left_rad_per_sec, right_rad_per_sec) =
             wheel_speeds(candidate.v, candidate.w, self.options);
 
@@ -449,12 +455,6 @@ impl DwaController {
         let Some(start) = maze.nearest_passable(x, z) else {
             return Err("no passable half-grid point near current pose".into());
         };
-        let start_cell = self.cell_from_world(x, z);
-
-        if let Some(path) = self.solution_path(start_cell, target_cell) {
-            self.set_path(path);
-            return Ok(());
-        }
 
         let output = plan_path_impl(&PlanPathRequest {
             size: self.size,
@@ -483,25 +483,6 @@ impl DwaController {
         self.path_distances = cumulative_path_distances(&self.path);
         self.path_progress = 0.0;
         self.replan_count += 1;
-    }
-
-    fn solution_path(&self, start_cell: usize, target_cell: usize) -> Option<Vec<Point2>> {
-        if self.solution.len() < 2 {
-            return None;
-        }
-
-        let start_index = self.solution.iter().position(|cell| *cell == start_cell)?;
-        let target_index = self.solution.iter().position(|cell| *cell == target_cell)?;
-        let cells: Box<dyn Iterator<Item = &usize>> = if start_index <= target_index {
-            Box::new(self.solution[start_index..=target_index].iter())
-        } else {
-            Box::new(self.solution[target_index..=start_index].iter().rev())
-        };
-        let path = cells
-            .map(|cell| self.cell_center_world(*cell))
-            .collect::<Vec<_>>();
-
-        if path.len() >= 2 { Some(path) } else { None }
     }
 
     fn choose_target_cell(&mut self, current_cell: usize) -> usize {
@@ -554,6 +535,23 @@ impl DwaController {
         } else {
             0.0
         };
+        let heading_to_target = (target.x - x).atan2(target.z - z);
+        let heading_error = normalize_angle(heading_to_target - yaw).abs();
+        let heading_alignment = heading_error.cos().max(0.0);
+        let heading_speed_cap = if heading_error > std::f64::consts::PI * 0.62 {
+            0.75
+        } else if heading_error > std::f64::consts::PI * 0.42 {
+            1.55
+        } else {
+            self.options.max_linear_speed * (0.42 + 0.58 * heading_alignment.sqrt())
+        };
+        let clearance_speed_cap = if current_clearance < 0.05 {
+            1.6
+        } else if current_clearance < 0.1 {
+            3.8
+        } else {
+            self.options.max_linear_speed
+        };
         let nominal_min_v =
             current_v - self.options.max_linear_acceleration * self.options.control_period;
         let min_v = if current_clearance < RECOVERY_CLEARANCE {
@@ -563,7 +561,10 @@ impl DwaController {
         };
         let max_v = (current_v
             + self.options.max_linear_acceleration * self.options.control_period)
-            .min(self.options.max_linear_speed);
+            .min(self.options.max_linear_speed)
+            .min(heading_speed_cap)
+            .min(clearance_speed_cap);
+        let min_v = min_v.min(max_v);
         let min_w = (current_w
             - self.options.max_angular_acceleration * self.options.control_period)
             .max(-self.options.max_angular_speed);
@@ -659,6 +660,10 @@ impl DwaController {
                 continue;
             }
 
+            if initial_clearance > MIN_ROLLOUT_CLEARANCE && clearance < MIN_ROLLOUT_CLEARANCE {
+                return None;
+            }
+
             min_clearance = min_clearance.min(clearance);
         }
 
@@ -666,6 +671,10 @@ impl DwaController {
         let final_clearance = self.clearance_at_pose(final_point, yaw);
 
         if min_clearance <= 0.0 && final_clearance <= initial_clearance.max(0.0) + 0.01 {
+            return None;
+        }
+
+        if initial_clearance > MIN_ROLLOUT_CLEARANCE && min_clearance < MIN_ROLLOUT_CLEARANCE {
             return None;
         }
 
@@ -714,19 +723,39 @@ impl DwaController {
         })
     }
 
-    fn braking_candidate(&self, current_v: f64, current_w: f64, target: Point2) -> Candidate {
-        let v = (current_v - self.options.max_linear_acceleration * self.options.control_period)
-            .max(0.0);
-        let w = current_w.signum()
-            * (current_w.abs()
-                - self.options.max_angular_acceleration * self.options.control_period)
-                .max(0.0);
+    fn progress_fallback_candidate(&self, telemetry: DwaTelemetry, target: Point2) -> Candidate {
+        let target_yaw = (target.x - telemetry.x).atan2(target.z - telemetry.z);
+        let heading_error = normalize_angle(target_yaw - telemetry.yaw);
+        let alignment = heading_error.cos().max(0.0);
+        let mut v = if heading_error.abs() > 1.35 {
+            1.1
+        } else {
+            self.options.max_linear_speed * (0.38 + 0.62 * alignment)
+        };
+        let mut w = (heading_error * 5.4).clamp(
+            -self.options.max_angular_speed,
+            self.options.max_angular_speed,
+        );
+
+        while !wheel_speeds_within_limits(v, w, self.options) && v > 0.4 {
+            v *= 0.88;
+        }
+
+        if !wheel_speeds_within_limits(v, w, self.options) {
+            w *= 0.75;
+        }
 
         Candidate {
             v,
             w,
-            score: -1_000_000.0,
-            clearance: 0.0,
+            score: -500_000.0,
+            clearance: self.clearance_at_pose(
+                Point2 {
+                    x: telemetry.x,
+                    z: telemetry.z,
+                },
+                telemetry.yaw,
+            ),
             progress: self.path_progress,
             target,
             sampled: 0,
@@ -778,17 +807,42 @@ impl DwaController {
             + self.options.robot_half_width
             + self.options.safety_margin
             + BROAD_PHASE_CLEARANCE;
+        let collision_radius = self
+            .options
+            .robot_front_extent
+            .max(self.options.robot_rear_extent)
+            .hypot(self.options.robot_half_width)
+            + self.options.safety_margin;
 
-        for wall in &self.wall_rects {
-            if !rect_near_point(*wall, point, broad_phase_radius) {
-                continue;
+        let search_radius = broad_phase_radius + WALL_BIN_SEARCH_PADDING;
+        let min_col = ((point.x - search_radius).floor() as i32)
+            .clamp(0, self.size.saturating_sub(1) as i32) as usize;
+        let max_col = ((point.x + search_radius).floor() as i32)
+            .clamp(0, self.size.saturating_sub(1) as i32) as usize;
+        let min_row = ((point.z - search_radius).floor() as i32)
+            .clamp(0, self.size.saturating_sub(1) as i32) as usize;
+        let max_row = ((point.z + search_radius).floor() as i32)
+            .clamp(0, self.size.saturating_sub(1) as i32) as usize;
+
+        for row in min_row..=max_row {
+            for col in min_col..=max_col {
+                for wall_index in &self.wall_bins[row * self.size + col] {
+                    let wall = self.wall_rects[*wall_index];
+
+                    if !rect_near_point(wall, point, broad_phase_radius) {
+                        continue;
+                    }
+
+                    if rect_near_point(wall, point, collision_radius)
+                        && footprint_intersects_rect(point, yaw, self.options, wall)
+                    {
+                        return -1.0;
+                    }
+
+                    clearance =
+                        clearance.min(distance_to_rect(footprint_center, wall) - clearance_radius);
+                }
             }
-
-            if footprint_intersects_rect(point, yaw, self.options, *wall) {
-                return -1.0;
-            }
-
-            clearance = clearance.min(distance_to_rect(footprint_center, *wall) - clearance_radius);
         }
 
         clearance.max(0.001)
@@ -806,6 +860,88 @@ impl DwaController {
             x: (cell % self.size) as f64 + 0.5,
             z: (cell / self.size) as f64 + 0.5,
         }
+    }
+}
+
+fn build_wall_bins(size: usize, wall_rects: &[WallRect]) -> Vec<Vec<usize>> {
+    let mut bins = vec![Vec::new(); size * size];
+
+    for (index, rect) in wall_rects.iter().enumerate() {
+        let center_x = (rect.min_x + rect.max_x) / 2.0;
+        let center_z = (rect.min_z + rect.max_z) / 2.0;
+        let col = center_x.floor().clamp(0.0, size.saturating_sub(1) as f64) as usize;
+        let row = center_z.floor().clamp(0.0, size.saturating_sub(1) as f64) as usize;
+
+        bins[row * size + col].push(index);
+    }
+
+    bins
+}
+
+fn sprint_solution(size: usize, walls: &[u8], solution: Vec<usize>) -> Vec<usize> {
+    if solution.len() < 2 {
+        return solution;
+    }
+
+    let start = solution[0];
+    let next = solution[1];
+    let start_row = start / size;
+    let start_col = start % size;
+    let next_row = next / size;
+    let next_col = next % size;
+    let delta_row = next_row as isize - start_row as isize;
+    let delta_col = next_col as isize - start_col as isize;
+
+    if delta_row.abs() + delta_col.abs() != 1 {
+        return solution;
+    }
+
+    let mut current = start;
+    let mut run = vec![start];
+
+    loop {
+        let row = current / size;
+        let col = current % size;
+        let Some(next_row) = row.checked_add_signed(delta_row) else {
+            break;
+        };
+        let Some(next_col) = col.checked_add_signed(delta_col) else {
+            break;
+        };
+
+        if next_row >= size || next_col >= size {
+            break;
+        }
+
+        let next_cell = next_row * size + next_col;
+
+        if !cells_connected(size, walls, current, next_cell) {
+            break;
+        }
+
+        run.push(next_cell);
+        current = next_cell;
+    }
+
+    if run.len() >= 6 {
+        vec![start, *run.last().unwrap_or(&start)]
+    } else {
+        solution
+    }
+}
+
+fn cells_connected(size: usize, walls: &[u8], a: usize, b: usize) -> bool {
+    let ar = a / size;
+    let ac = a % size;
+    let br = b / size;
+    let bc = b % size;
+
+    match (br as isize - ar as isize, bc as isize - ac as isize) {
+        (1, 0) => walls[a] & NORTH == 0 && walls[b] & SOUTH == 0,
+        (-1, 0) => walls[a] & SOUTH == 0 && walls[b] & NORTH == 0,
+        (0, 1) => walls[a] & EAST == 0 && walls[b] & WEST == 0,
+        (0, -1) => walls[a] & WEST == 0 && walls[b] & EAST == 0,
+        _ => false,
     }
 }
 
@@ -1577,6 +1713,32 @@ mod tests {
     }
 
     #[test]
+    fn dwa_path_preserves_half_grid_diagonal_waypoints() {
+        let size = 2;
+        let mut walls = vec![ALL_WALLS; size * size];
+        open_between(&mut walls, size, 0, 1);
+        open_between(&mut walls, size, 0, 2);
+        open_between(&mut walls, size, 1, 3);
+        open_between(&mut walls, size, 2, 3);
+        let mut controller = test_controller(size, walls, vec![0, 3]);
+
+        controller
+            .next_command_impl(DwaTelemetry {
+                x: 0.5,
+                z: 0.5,
+                yaw: std::f64::consts::FRAC_PI_4,
+                velocity_x: 0.0,
+                velocity_z: 0.0,
+                angular_velocity_y: 0.0,
+            })
+            .expect("DWA command should be produced");
+
+        assert!(controller.path.windows(2).any(|points| {
+            (points[0].x - points[1].x).abs() == 0.5 && (points[0].z - points[1].z).abs() == 0.5
+        }));
+    }
+
+    #[test]
     fn astar_represents_required_in_place_turns() {
         let size = 2;
         let mut walls = vec![ALL_WALLS; size * size];
@@ -1651,6 +1813,30 @@ mod tests {
                 yaw: std::f64::consts::PI / 2.0,
                 velocity_x: 2.0,
                 velocity_z: 0.0,
+                angular_velocity_y: 0.0,
+            })
+            .expect("DWA command should be produced");
+
+        assert!(output.debug.valid_candidates > 0);
+        assert!(output.debug.clearance > 0.0);
+    }
+
+    #[test]
+    fn dwa_selects_collision_free_candidate_in_diagonal_passage() {
+        let size = 2;
+        let mut walls = vec![ALL_WALLS; size * size];
+        open_between(&mut walls, size, 0, 1);
+        open_between(&mut walls, size, 0, 2);
+        open_between(&mut walls, size, 1, 3);
+        open_between(&mut walls, size, 2, 3);
+        let mut controller = test_controller(size, walls, vec![0, 3]);
+        let output = controller
+            .next_command_impl(DwaTelemetry {
+                x: 0.5,
+                z: 0.5,
+                yaw: std::f64::consts::FRAC_PI_4,
+                velocity_x: 1.5 * std::f64::consts::FRAC_1_SQRT_2,
+                velocity_z: 1.5 * std::f64::consts::FRAC_1_SQRT_2,
                 angular_velocity_y: 0.0,
             })
             .expect("DWA command should be produced");

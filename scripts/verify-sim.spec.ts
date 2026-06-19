@@ -5,8 +5,10 @@ interface SimulationDebugSnapshot {
   readonly fps: number;
   readonly dwaHz: number;
   readonly workerStatus: string;
+  readonly eulerAngles: { readonly x: number; readonly y: number; readonly z: number };
   readonly averageSpeed: number;
   readonly wallCollisionCount: number;
+  readonly resetCount: number;
 }
 
 declare global {
@@ -33,6 +35,13 @@ test("default DWA run stays fast and collision-free for 30 seconds", async ({ pa
   expect(debug?.workerStatus).toBe("ready");
   expect(debug?.averageSpeed ?? 0).toBeGreaterThanOrEqual(5);
   expect(debug?.wallCollisionCount ?? 1).toBe(0);
+  expect(debug?.resetCount ?? 1).toBe(0);
+  expect(Math.abs(debug?.eulerAngles.x ?? Number.POSITIVE_INFINITY)).toBeLessThan(
+    (20 * Math.PI) / 180,
+  );
+  expect(Math.abs(debug?.eulerAngles.z ?? Number.POSITIVE_INFINITY)).toBeLessThan(
+    (20 * Math.PI) / 180,
+  );
 
   const screenshot = await canvas.screenshot();
   expect(screenshot.byteLength).toBeGreaterThan(1024);

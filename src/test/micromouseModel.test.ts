@@ -7,6 +7,7 @@ import {
 } from "../rendering/micromouseModel";
 import {
   boardFootprintPoints,
+  micromouseEulerAnglesFromChassisRotation,
   micromouseGroundTruthPoseFromChassis,
   micromouseWheelCenterLocal,
   yawFromRobotForward,
@@ -120,5 +121,18 @@ describe("micromouse model", () => {
     expect(yawFromRobotForward(new Vector3(0, 0, 1))).toBeCloseTo(0);
     expect(yawFromRobotForward(new Vector3(1, 0, 0))).toBeCloseTo(Math.PI / 2);
     expect(pose.origin.y).toBeCloseTo(MICROMOUSE_BLUEPRINT.wheel.axleY);
+  });
+
+  it("reports chassis pitch yaw and roll from the full quaternion", () => {
+    const pitch = 0.12;
+    const yaw = -0.3;
+    const roll = 0.18;
+    const euler = micromouseEulerAnglesFromChassisRotation(
+      Quaternion.RotationYawPitchRoll(yaw, pitch, roll),
+    );
+
+    expect(euler.x).toBeCloseTo(pitch);
+    expect(euler.y).toBeCloseTo(yaw);
+    expect(euler.z).toBeCloseTo(roll);
   });
 });

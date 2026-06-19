@@ -95,7 +95,8 @@ describe("DWA motor driver", () => {
       leftRadPerSec: 12,
       rightRadPerSec: 10,
     });
-    expect(driver.debug.dwaHz).toBe(DEFAULT_DWA_OPTIONS.targetControlHz);
+    expect(driver.debug.dwaHz).toBe(1);
+    expect(driver.debug.targetDwaHz).toBe(DEFAULT_DWA_OPTIONS.targetControlHz);
 
     driver.dispose();
   });

@@ -34,3 +34,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Made maze generation score history opt-in to reduce default generation memory and transfer size.
 - Replaced pure pursuit path following with DWA control using the known maze map for high-speed final-run navigation.
 - Raised the micromouse control and physics limits to support faster DWA runs while keeping worker watchdog recovery.
+- Removed the temporary guided-pose simulation bypass so DWA now drives the physics rig only through differential wheel commands.
+- Restored half-grid DWA path planning for 45 degree diagonal runs and changed debug DWA Hz to report actual worker responses against the target rate.
+- Retuned the high-speed micromouse mass, center of mass, inertia, damping, and wheel motor force defaults for real physics control.
+- Moved DWA command production into a continuous worker-side loop and kept the main thread publishing latest telemetry without SharedArrayBuffer.
+- Added chassis pitch/yaw/roll telemetry from the real quaternion and debug reset count reporting.
+- Added a small physics force/torque assist derived from differential wheel commands to reduce four-wheel scrub without writing pose or velocity.

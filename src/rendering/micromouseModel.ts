@@ -68,11 +68,11 @@ export const MICROMOUSE_BLUEPRINT: MicromouseBlueprint = {
     height: 0.11,
     depth: 0.57,
     centerY: 0.105,
-    mass: 0.22,
+    mass: 0.3,
     centerOfMassOffset: {
       x: 0,
-      y: -0.025,
-      z: -0.16,
+      y: -0.04,
+      z: -0.17,
     },
   },
   pcb: {
@@ -87,8 +87,8 @@ export const MICROMOUSE_BLUEPRINT: MicromouseBlueprint = {
     radius: 0.09,
     width: 0.056,
     axleY: 0.09,
-    mass: 0.024,
-    motorMaxForce: 4.0,
+    mass: 0.03,
+    motorMaxForce: 2.2,
   },
   wheels: [
     { id: "front-left", side: "left", localX: -0.205, localZ: -0.055 },

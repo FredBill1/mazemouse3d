@@ -245,7 +245,7 @@ class DebugPanel implements IContentRenderer {
     const run = metricGrid([
       ["Elapsed", `${formatNumber(snapshot.elapsedSeconds, 2)} s`],
       ["FPS", formatNumber(snapshot.fps, 1)],
-      ["DWA Hz", formatNumber(snapshot.dwaHz, 0)],
+      ["DWA Hz", `${formatNumber(snapshot.dwaHz, 0)} / ${formatNumber(snapshot.targetDwaHz, 0)}`],
       ["Worker", snapshot.workerStatus],
       ["Restarts", String(snapshot.workerRestartCount)],
       ["Latency", formatNullable(snapshot.lastWorkerLatencyMs, " ms", 1)],
@@ -253,12 +253,13 @@ class DebugPanel implements IContentRenderer {
       ["Distance", formatNumber(snapshot.totalDistance, 2)],
       ["Average speed", formatNumber(snapshot.averageSpeed, 2)],
       ["Wall collisions", String(snapshot.wallCollisionCount)],
+      ["Resets", String(snapshot.resetCount)],
     ]);
 
     const pose = metricGrid([
       ["Position", formatPoint(snapshot.pose)],
       ["Yaw", `${formatDegrees(snapshot.yaw)} deg`],
-      ["Angles", formatPointDegrees(snapshot.eulerAngles)],
+      ["Pitch / Yaw / Roll", formatPointDegrees(snapshot.eulerAngles)],
       ["Velocity", formatPoint(snapshot.linearVelocity)],
       ["Speed", formatNumber(snapshot.horizontalSpeed, 2)],
       ["Angular velocity", formatPoint(snapshot.angularVelocity)],

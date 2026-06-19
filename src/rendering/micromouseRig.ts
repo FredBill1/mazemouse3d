@@ -35,6 +35,7 @@ import {
   type MotorCommand,
   type RobotGroundTruthPose,
   type RobotGroundTruthTelemetry,
+  type WorldPoint,
 } from "./motorDriver";
 
 interface WheelAssembly {
@@ -105,6 +106,12 @@ const SENSOR_BEAM_LENS_OFFSET = 0.032;
 const SENSOR_BEAM_HIT_OFFSET = 0.006;
 const SENSOR_BEAM_HIT_DIAMETER = 0.038;
 const SENSOR_BEAM_MISS_ALPHA_SCALE = 0.34;
+const CHASSIS_COLLIDER_FOOTPRINT_SCALE = 0.72;
+const WHEEL_COLLIDER_WIDTH_SCALE = 0.55;
+const DRIVE_ASSIST_LINEAR_GAIN = 18;
+const DRIVE_ASSIST_MAX_FORCE = 5.8;
+const DRIVE_ASSIST_ANGULAR_GAIN = 0.18;
+const DRIVE_ASSIST_MAX_TORQUE = 2.2;
 
 export class MicromouseRig {
   readonly #scene: Scene;
@@ -148,7 +155,6 @@ export class MicromouseRig {
       restitution: 0.02,
       frictionCombine: PhysicsMaterialCombineMode.ARITHMETIC_MEAN,
     };
-    this.#chassisAggregate.body.disablePreStep = false;
     const currentInertia = this.#chassisAggregate.body.getMassProperties().inertia;
     if (currentInertia === undefined) {
       throw Error("Expected getMassProperties().inertia to be defined.");
@@ -156,10 +162,10 @@ export class MicromouseRig {
     this.#chassisAggregate.body.setMassProperties({
       mass: MICROMOUSE_BLUEPRINT.chassis.mass,
       centerOfMass: vectorFromBlueprint(MICROMOUSE_BLUEPRINT.chassis.centerOfMassOffset),
-      inertia: new Vector3(currentInertia.x * 1000, currentInertia.y, currentInertia.z), // prevent wheelie
+      inertia: new Vector3(currentInertia.x * 1800, currentInertia.y * 1.5, currentInertia.z * 900),
     });
-    this.#chassisAggregate.body.setLinearDamping(0.14);
-    this.#chassisAggregate.body.setAngularDamping(0.22);
+    this.#chassisAggregate.body.setLinearDamping(0.1);
+    this.#chassisAggregate.body.setAngularDamping(0.32);
     this.#registerCollisionBody(this.#chassisAggregate.body);
 
     createMicromouseDisplayModel(this.#scene, this.#materials, {
@@ -181,48 +187,8 @@ export class MicromouseRig {
       const target = wheel.layout.side === "left" ? command.leftRadPerSec : command.rightRadPerSec;
       wheel.constraint.setAxisMotorTarget(PhysicsConstraintAxis.ANGULAR_X, target);
     }
-  }
 
-  setGuidedGroundTruthPose(
-    origin: Pick<Vector3, "x" | "y" | "z">,
-    yaw: number,
-    linearVelocity: Pick<Vector3, "x" | "y" | "z">,
-    angularVelocityY: number,
-  ): void {
-    if (this.#disposed) {
-      return;
-    }
-
-    const rotation = Quaternion.RotationAxis(Vector3.Up(), yaw);
-    const wheelCenterOffset = Vector3.TransformCoordinates(
-      micromouseWheelCenterLocal(),
-      Matrix.Compose(Vector3.One(), rotation, Vector3.Zero()),
-    );
-    const chassisPosition = new Vector3(
-      origin.x - wheelCenterOffset.x,
-      MICROMOUSE_BLUEPRINT.chassis.centerY,
-      origin.z - wheelCenterOffset.z,
-    );
-    const linear = new Vector3(linearVelocity.x, linearVelocity.y, linearVelocity.z);
-    const angular = new Vector3(0, angularVelocityY, 0);
-
-    this.#chassisAggregate.body.setLinearVelocity(linear);
-    this.#chassisAggregate.body.setAngularVelocity(angular);
-    this.#chassis.position.copyFrom(chassisPosition);
-    this.#chassis.rotationQuaternion = rotation;
-
-    for (const wheel of this.#wheels) {
-      const wheelPosition = localToWorld(
-        new Vector3(wheel.layout.localX, wheelAxleLocalY(), wheel.layout.localZ),
-        chassisPosition,
-        rotation,
-      );
-
-      wheel.body.setLinearVelocity(linear);
-      wheel.body.setAngularVelocity(angular);
-      wheel.mesh.position.copyFrom(wheelPosition);
-      wheel.mesh.rotationQuaternion = rotation;
-    }
+    this.#applyDifferentialDriveAssist(command);
   }
 
   getGroundTruthPose(): RobotGroundTruthPose {
@@ -237,15 +203,10 @@ export class MicromouseRig {
     const linearVelocity = this.#chassisAggregate.body.getLinearVelocity();
     const angularVelocity = this.#chassisAggregate.body.getAngularVelocity();
     const rotation = this.#chassis.rotationQuaternion ?? Quaternion.Identity();
-    const euler = rotation.toEulerAngles();
 
     return {
       ...pose,
-      eulerAngles: {
-        x: euler.x,
-        y: pose.yaw,
-        z: euler.z,
-      },
+      eulerAngles: micromouseEulerAnglesFromChassisRotation(rotation),
       linearVelocity: vectorToWorldPoint(linearVelocity),
       angularVelocity: vectorToWorldPoint(angularVelocity),
       horizontalSpeed: Math.hypot(linearVelocity.x, linearVelocity.z),
@@ -346,9 +307,10 @@ export class MicromouseRig {
     for (const layout of MICROMOUSE_BLUEPRINT.wheels) {
       const mesh = this.#createWheelMesh(layout, origin, rotation);
       const body = new PhysicsBody(mesh, PhysicsMotionType.DYNAMIC, false, this.#scene);
+      const colliderHalfWidth = (MICROMOUSE_BLUEPRINT.wheel.width * WHEEL_COLLIDER_WIDTH_SCALE) / 2;
       const shape = new PhysicsShapeCylinder(
-        new Vector3(-MICROMOUSE_BLUEPRINT.wheel.width / 2, 0, 0),
-        new Vector3(MICROMOUSE_BLUEPRINT.wheel.width / 2, 0, 0),
+        new Vector3(-colliderHalfWidth, 0, 0),
+        new Vector3(colliderHalfWidth, 0, 0),
         MICROMOUSE_BLUEPRINT.wheel.radius,
         this.#scene,
       );
@@ -359,7 +321,6 @@ export class MicromouseRig {
         frictionCombine: PhysicsMaterialCombineMode.MAXIMUM,
       };
       body.shape = shape;
-      body.disablePreStep = false;
       body.setMassProperties({ mass: MICROMOUSE_BLUEPRINT.wheel.mass });
       body.setLinearDamping(0.04);
       body.setAngularDamping(0.02);
@@ -531,6 +492,34 @@ export class MicromouseRig {
         }
       }),
     );
+  }
+
+  #applyDifferentialDriveAssist(command: MotorCommand): void {
+    const rotation = this.#chassis.rotationQuaternion ?? Quaternion.Identity();
+    const rotationMatrix = Matrix.FromQuaternionToRef(rotation, Matrix.Identity());
+    const forward = Vector3.TransformNormal(Vector3.Forward(), rotationMatrix).normalize();
+    const linearVelocity = this.#chassisAggregate.body.getLinearVelocity();
+    const angularVelocity = this.#chassisAggregate.body.getAngularVelocity();
+    const targetLinear =
+      (MICROMOUSE_BLUEPRINT.wheel.radius * (command.leftRadPerSec + command.rightRadPerSec)) / 2;
+    const targetAngular =
+      (MICROMOUSE_BLUEPRINT.wheel.radius * (command.leftRadPerSec - command.rightRadPerSec)) /
+      wheelTrackWidth();
+    const currentLinear = Vector3.Dot(linearVelocity, forward);
+    const linearError = targetLinear - currentLinear;
+    const forceMagnitude = clamp(
+      linearError * DRIVE_ASSIST_LINEAR_GAIN,
+      -DRIVE_ASSIST_MAX_FORCE,
+      DRIVE_ASSIST_MAX_FORCE,
+    );
+    const torqueMagnitude = clamp(
+      (targetAngular - angularVelocity.y) * DRIVE_ASSIST_ANGULAR_GAIN,
+      -DRIVE_ASSIST_MAX_TORQUE,
+      DRIVE_ASSIST_MAX_TORQUE,
+    );
+
+    this.#chassisAggregate.body.applyForce(forward.scale(forceMagnitude), this.#chassis.position);
+    this.#chassisAggregate.body.applyTorque(new Vector3(0, torqueMagnitude, 0));
   }
 }
 
@@ -1209,6 +1198,16 @@ export function micromouseGroundTruthPoseFromChassis(
   };
 }
 
+export function micromouseEulerAnglesFromChassisRotation(rotation: Quaternion): WorldPoint {
+  const euler = rotation.toEulerAngles();
+
+  return {
+    x: euler.x,
+    y: euler.y,
+    z: euler.z,
+  };
+}
+
 export function micromouseWheelCenterLocal(): Vector3 {
   const wheelCount = MICROMOUSE_BLUEPRINT.wheels.length;
   const sum = MICROMOUSE_BLUEPRINT.wheels.reduce(
@@ -1239,7 +1238,16 @@ function createPcbColliderMesh(scene: Scene, name: string): Mesh {
     MICROMOUSE_BLUEPRINT.chassis.centerY;
   const colliderTopY = pcbBottomY + MICROMOUSE_BLUEPRINT.chassis.height;
 
-  return createExtrudedFootprintMesh(scene, name, boardFootprintPoints(), pcbBottomY, colliderTopY);
+  return createExtrudedFootprintMesh(
+    scene,
+    name,
+    boardFootprintPoints().map((point) => ({
+      x: point.x * CHASSIS_COLLIDER_FOOTPRINT_SCALE,
+      z: point.z * CHASSIS_COLLIDER_FOOTPRINT_SCALE,
+    })),
+    pcbBottomY,
+    colliderTopY,
+  );
 }
 
 function createExtrudedFootprintMesh(
@@ -1555,6 +1563,15 @@ function relativeY(worldY: number): number {
 
 function wheelAxleLocalY(): number {
   return MICROMOUSE_BLUEPRINT.wheel.axleY - MICROMOUSE_BLUEPRINT.chassis.centerY;
+}
+
+function wheelTrackWidth(): number {
+  const left = MICROMOUSE_BLUEPRINT.wheels.filter((wheel) => wheel.side === "left");
+  const right = MICROMOUSE_BLUEPRINT.wheels.filter((wheel) => wheel.side === "right");
+  const average = (values: readonly number[]): number =>
+    values.reduce((sum, value) => sum + value, 0) / values.length;
+
+  return average(right.map((wheel) => wheel.localX)) - average(left.map((wheel) => wheel.localX));
 }
 
 function localToWorld(local: Vector3, origin: Vector3, rotation: Quaternion): Vector3 {
