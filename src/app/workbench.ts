@@ -2,7 +2,12 @@ import { DockviewComponent, type IContentRenderer } from "dockview-core";
 import "dockview-core/dist/styles/dockview.css";
 import type { AppState, AppStateSnapshot } from "./state";
 import type { MazeWorkerClient } from "./mazeWorkerClient";
-import { BabylonMazeSimulation, type MazeViewMode } from "../rendering/babylonMazeSimulation";
+import {
+  BabylonMazeSimulation,
+  type DebugVector3,
+  type MazeSimulationDebugSnapshot,
+  type MazeViewMode,
+} from "../rendering/babylonMazeSimulation";
 
 interface Disposable {
   dispose(): void;
@@ -45,6 +50,8 @@ export function mountWorkbench(
           return new BabylonPanel(simulation, "top");
         case "metrics":
           return new MetricsPanel(state, mazeWorker);
+        case "debug":
+          return new DebugPanel(simulation);
         default:
           return new EmptyPanel(`Unknown panel: ${name}`);
       }
@@ -74,11 +81,18 @@ export function mountWorkbench(
     initialHeight: topPanelInitialSize,
   });
 
-  dockview.addPanel({
+  const metricsPanel = dockview.addPanel({
     id: "metrics",
     title: "Metrics",
     component: "metrics",
     position: { referencePanel: topPanel, direction: isVertical ? "right" : "below" },
+  });
+
+  dockview.addPanel({
+    id: "debug",
+    title: "Debug",
+    component: "debug",
+    position: { referencePanel: metricsPanel, direction: "below" },
   });
 
   const runState = topbar.querySelector<HTMLElement>("[data-run-state]");
@@ -190,6 +204,94 @@ class MetricsPanel implements IContentRenderer {
   }
 }
 
+class DebugPanel implements IContentRenderer {
+  readonly element = document.createElement("div");
+  readonly #simulation: BabylonMazeSimulation;
+  readonly #slots = new Map<string, HTMLElement>();
+  #unsubscribe: (() => void) | null = null;
+
+  constructor(simulation: BabylonMazeSimulation) {
+    this.#simulation = simulation;
+    this.element.className = "debug-panel";
+  }
+
+  init(): void {
+    this.element.replaceChildren(
+      debugSection(
+        "Run",
+        [
+          ["elapsed", "Elapsed"],
+          ["fps", "FPS"],
+          ["distance", "Distance"],
+          ["average-speed", "Average speed"],
+          ["wall-collisions", "Wall hits"],
+        ],
+        this.#slots,
+      ),
+      debugSection(
+        "Pose",
+        [
+          ["position-x", "Position X"],
+          ["position-y", "Position Y"],
+          ["position-z", "Position Z"],
+          ["rotation-x", "Rotation X"],
+          ["rotation-y", "Rotation Y"],
+          ["rotation-z", "Rotation Z"],
+        ],
+        this.#slots,
+      ),
+      debugSection(
+        "Velocity",
+        [
+          ["linear-velocity-x", "Linear X"],
+          ["linear-velocity-y", "Linear Y"],
+          ["linear-velocity-z", "Linear Z"],
+          ["angular-velocity-x", "Angular X"],
+          ["angular-velocity-y", "Angular Y"],
+          ["angular-velocity-z", "Angular Z"],
+        ],
+        this.#slots,
+      ),
+    );
+    this.#unsubscribe = this.#simulation.subscribeDebug((snapshot) => this.#render(snapshot));
+  }
+
+  dispose(): void {
+    this.#unsubscribe?.();
+  }
+
+  #render(snapshot: MazeSimulationDebugSnapshot): void {
+    this.#set("elapsed", `${snapshot.elapsedSeconds.toFixed(2)} s`);
+    this.#set("fps", snapshot.fps > 0 ? snapshot.fps.toFixed(1) : "--");
+    this.#set("distance", snapshot.totalDistance.toFixed(3));
+    this.#set("average-speed", `${snapshot.averageSpeed.toFixed(3)} u/s`);
+    this.#set("wall-collisions", String(snapshot.wallCollisions));
+
+    this.#setVector("position", snapshot.position, formatUnit);
+    this.#setVector("rotation", snapshot.rotationDegrees, formatDegrees);
+    this.#setVector("linear-velocity", snapshot.linearVelocity, formatUnitSpeed);
+    this.#setVector("angular-velocity", snapshot.angularVelocityDegrees, formatDegreesPerSecond);
+  }
+
+  #setVector(
+    prefix: string,
+    vector: DebugVector3 | null,
+    formatter: (value: number) => string,
+  ): void {
+    for (const axis of DEBUG_AXES) {
+      this.#set(`${prefix}-${axis}`, vector ? formatter(vector[axis]) : "--");
+    }
+  }
+
+  #set(key: string, value: string): void {
+    const slot = this.#slots.get(key);
+
+    if (slot) {
+      slot.textContent = value;
+    }
+  }
+}
+
 class EmptyPanel implements IContentRenderer {
   readonly element = document.createElement("div");
 
@@ -220,10 +322,66 @@ function metricGrid(entries: ReadonlyArray<readonly [label: string, value: strin
   return grid;
 }
 
+function debugSection(
+  title: string,
+  entries: ReadonlyArray<readonly [key: string, label: string]>,
+  slots: Map<string, HTMLElement>,
+): HTMLElement {
+  const section = document.createElement("section");
+  section.className = "debug-section";
+
+  const heading = document.createElement("div");
+  heading.className = "debug-section-title";
+  heading.textContent = title;
+
+  section.append(heading, debugMetricGrid(entries, slots));
+
+  return section;
+}
+
+function debugMetricGrid(
+  entries: ReadonlyArray<readonly [key: string, label: string]>,
+  slots: Map<string, HTMLElement>,
+): HTMLElement {
+  const grid = document.createElement("dl");
+  grid.className = "metric-grid debug-metric-grid";
+
+  for (const [key, label] of entries) {
+    const term = document.createElement("dt");
+    term.textContent = label;
+
+    const description = document.createElement("dd");
+    description.textContent = "--";
+    slots.set(key, description);
+
+    grid.append(term, description);
+  }
+
+  return grid;
+}
+
 function statusBlock(message: string): HTMLElement {
   const block = document.createElement("div");
   block.className = "status-block";
   block.textContent = message;
 
   return block;
+}
+
+const DEBUG_AXES = ["x", "y", "z"] as const;
+
+function formatUnit(value: number): string {
+  return value.toFixed(3);
+}
+
+function formatUnitSpeed(value: number): string {
+  return `${value.toFixed(3)} u/s`;
+}
+
+function formatDegrees(value: number): string {
+  return `${value.toFixed(1)} deg`;
+}
+
+function formatDegreesPerSecond(value: number): string {
+  return `${value.toFixed(1)} deg/s`;
 }

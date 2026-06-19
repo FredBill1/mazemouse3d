@@ -14,7 +14,10 @@ import { TransformNode } from "@babylonjs/core/Meshes/transformNode.js";
 import { Scene } from "@babylonjs/core/scene.js";
 import "@babylonjs/core/Physics/physicsEngineComponent.js";
 import { PhysicsAggregate } from "@babylonjs/core/Physics/v2/physicsAggregate.js";
-import { PhysicsShapeType } from "@babylonjs/core/Physics/v2/IPhysicsEnginePlugin.js";
+import {
+  PhysicsEventType,
+  PhysicsShapeType,
+} from "@babylonjs/core/Physics/v2/IPhysicsEnginePlugin.js";
 import { PhysicsMaterialCombineMode } from "@babylonjs/core/Physics/v2/physicsMaterial.js";
 import { HavokPlugin } from "@babylonjs/core/Physics/v2/Plugins/havokPlugin.js";
 import type { AppState, AppStateSnapshot } from "../app/state";
@@ -23,12 +26,34 @@ import { buildWallSegments, cellCenter } from "./mazeGeometry";
 import {
   MicromouseRig,
   createMicromouseMaterials,
+  type MicromouseDebugKinematics,
   type MicromouseMaterials,
 } from "./micromouseRig";
 import type { MotorCommand } from "./motorDriver";
 import { PlannedMotorDriver, emitPlannerDebug, plannerDebugEnabled } from "./plannedMotorDriver";
 
 export type MazeViewMode = "perspective" | "top";
+
+export interface DebugVector3 {
+  readonly x: number;
+  readonly y: number;
+  readonly z: number;
+}
+
+export interface MazeSimulationDebugSnapshot {
+  readonly hasMicromouse: boolean;
+  readonly elapsedSeconds: number;
+  readonly fps: number;
+  readonly position: DebugVector3 | null;
+  readonly rotationDegrees: DebugVector3 | null;
+  readonly linearVelocity: DebugVector3 | null;
+  readonly angularVelocityDegrees: DebugVector3 | null;
+  readonly totalDistance: number;
+  readonly averageSpeed: number;
+  readonly wallCollisions: number;
+}
+
+export type MazeSimulationDebugListener = (snapshot: MazeSimulationDebugSnapshot) => void;
 
 interface Disposable {
   dispose(): void;
@@ -52,18 +77,37 @@ interface RegisteredMazeView {
   disposed: boolean;
 }
 
+interface CollisionTargetMetadata {
+  readonly sensorBeamTarget?: boolean;
+  readonly debugCollisionRole?: "floor" | "wall";
+}
+
 const WALL_HEIGHT = 0.36;
 const WALL_THICKNESS = 0.08;
 const FLOOR_COLLIDER_THICKNESS = 0.04;
 const PHYSICS_SUB_STEP_MS = 1000 / 120;
 const PHYSICS_STEP_SECONDS = 1 / 120;
 const DRAW_SOLUTION_CELLS = false;
+const RADIANS_TO_DEGREES = 180 / Math.PI;
+const EMPTY_DEBUG_SNAPSHOT: MazeSimulationDebugSnapshot = {
+  hasMicromouse: false,
+  elapsedSeconds: 0,
+  fps: 0,
+  position: null,
+  rotationDegrees: null,
+  linearVelocity: null,
+  angularVelocityDegrees: null,
+  totalDistance: 0,
+  averageSpeed: 0,
+  wallCollisions: 0,
+};
 
 export class BabylonMazeSimulation {
   readonly #host: HTMLElement;
   readonly #state: AppState;
   readonly #masterCanvas = document.createElement("canvas");
   readonly #views = new Set<RegisteredMazeView>();
+  readonly #debugListeners = new Set<MazeSimulationDebugListener>();
 
   #engine: Engine | null = null;
   #scene: Scene | null = null;
@@ -74,9 +118,15 @@ export class BabylonMazeSimulation {
   #unsubscribe: (() => void) | null = null;
   #currentMaze: MazeSnapshot | null = null;
   #micromouse: MicromouseRig | null = null;
+  #micromouseCollisionSubscription: Disposable | null = null;
   #motorDriver: PlannedMotorDriver | null = null;
   #motorCommand: MotorCommand = { leftRadPerSec: 0, rightRadPerSec: 0 };
   #plannerDebugControlTicks = 0;
+  #debugSnapshot: MazeSimulationDebugSnapshot = EMPTY_DEBUG_SNAPSHOT;
+  #elapsedSeconds = 0;
+  #totalDistance = 0;
+  #wallCollisions = 0;
+  #previousGroundPosition: { x: number; z: number } | null = null;
   #disposed = false;
   #started = false;
   #physicsEnabled = false;
@@ -133,6 +183,7 @@ export class BabylonMazeSimulation {
       this.#physicsAdvancedThisFrame = true;
     });
     this.#scene.onBeforePhysicsObservable.add(() => this.#updateMicromouseControl());
+    this.#scene.onAfterPhysicsObservable.add(() => this.#updateDebugRunMetrics());
 
     for (const view of this.#views) {
       this.#registerView(view);
@@ -141,6 +192,7 @@ export class BabylonMazeSimulation {
     this.#unsubscribe = this.#state.subscribe((snapshot) => this.#renderAppState(snapshot));
     this.#engine.runRenderLoop(() => {
       this.#scene?.render();
+      this.#publishDebugSnapshot();
     });
   }
 
@@ -177,6 +229,15 @@ export class BabylonMazeSimulation {
     };
   }
 
+  subscribeDebug(listener: MazeSimulationDebugListener): () => void {
+    this.#debugListeners.add(listener);
+    listener(this.#debugSnapshot);
+
+    return () => {
+      this.#debugListeners.delete(listener);
+    };
+  }
+
   dispose(): void {
     this.#disposed = true;
     this.#unsubscribe?.();
@@ -194,6 +255,7 @@ export class BabylonMazeSimulation {
     this.#scene?.dispose();
     this.#engine?.dispose();
     this.#masterCanvas.remove();
+    this.#debugListeners.clear();
   }
 
   async #enablePhysics(): Promise<void> {
@@ -331,7 +393,7 @@ export class BabylonMazeSimulation {
     );
     floor.position.set(maze.size / 2, 0, maze.size / 2);
     floor.material = this.#materials.floor;
-    floor.metadata = { sensorBeamTarget: true };
+    floor.metadata = collisionTargetMetadata("floor", true);
     floor.parent = root;
 
     const floorCollider = MeshBuilder.CreateBox(
@@ -341,6 +403,7 @@ export class BabylonMazeSimulation {
     );
     floorCollider.position.set(maze.size / 2, -FLOOR_COLLIDER_THICKNESS / 2, maze.size / 2);
     floorCollider.isVisible = false;
+    floorCollider.metadata = collisionTargetMetadata("floor");
     this.#addStaticBody(floorCollider, 1.05);
 
     for (const segment of buildWallSegments(maze, WALL_THICKNESS)) {
@@ -351,7 +414,7 @@ export class BabylonMazeSimulation {
       );
       wall.position.set(segment.centerX, WALL_HEIGHT / 2, segment.centerZ);
       wall.material = this.#materials.wall;
-      wall.metadata = { sensorBeamTarget: true };
+      wall.metadata = collisionTargetMetadata("wall", true);
       wall.parent = root;
       this.#addStaticBody(wall, 0.82);
     }
@@ -418,11 +481,21 @@ export class BabylonMazeSimulation {
       return;
     }
 
-    this.#micromouse?.dispose();
+    this.#disposeMicromouse();
+    this.#resetDebugRun();
     this.#micromouse = new MicromouseRig(this.#scene, this.#mouseMaterials, maze);
+    this.#micromouseCollisionSubscription = this.#micromouse.onCollision((event) => {
+      if (
+        event.type === PhysicsEventType.COLLISION_STARTED &&
+        isCollisionTargetRole(event.collidedMetadata, "wall")
+      ) {
+        this.#wallCollisions += 1;
+      }
+    });
     this.#motorDriver = new PlannedMotorDriver(maze, { debug: plannerDebugEnabled() });
     this.#motorCommand = { leftRadPerSec: 0, rightRadPerSec: 0 };
     this.#plannerDebugControlTicks = 0;
+    this.#publishDebugSnapshot();
 
     if (plannerDebugEnabled()) {
       emitPlannerDebug({
@@ -465,6 +538,76 @@ export class BabylonMazeSimulation {
     }
   }
 
+  #updateDebugRunMetrics(): void {
+    if (!this.#micromouse) {
+      return;
+    }
+
+    const { position } = this.#micromouse.getDebugKinematics();
+    this.#elapsedSeconds += PHYSICS_STEP_SECONDS;
+
+    if (this.#previousGroundPosition) {
+      this.#totalDistance += Math.hypot(
+        position.x - this.#previousGroundPosition.x,
+        position.z - this.#previousGroundPosition.z,
+      );
+    }
+
+    this.#previousGroundPosition = {
+      x: position.x,
+      z: position.z,
+    };
+  }
+
+  #publishDebugSnapshot(): void {
+    const fps = this.#engine?.getFps() ?? 0;
+
+    if (!this.#micromouse) {
+      this.#emitDebugSnapshot({
+        ...EMPTY_DEBUG_SNAPSHOT,
+        fps,
+      });
+      return;
+    }
+
+    const kinematics = this.#micromouse.getDebugKinematics();
+    this.#emitDebugSnapshot({
+      hasMicromouse: true,
+      elapsedSeconds: this.#elapsedSeconds,
+      fps,
+      position: vectorSnapshot(kinematics.position),
+      rotationDegrees: degreesVectorSnapshot(kinematics.rotationRadians),
+      linearVelocity: vectorSnapshot(kinematics.linearVelocity),
+      angularVelocityDegrees: degreesVectorSnapshot(kinematics.angularVelocityRadians),
+      totalDistance: this.#totalDistance,
+      averageSpeed: this.#elapsedSeconds > 0 ? this.#totalDistance / this.#elapsedSeconds : 0,
+      wallCollisions: this.#wallCollisions,
+    });
+  }
+
+  #emitDebugSnapshot(snapshot: MazeSimulationDebugSnapshot): void {
+    this.#debugSnapshot = snapshot;
+
+    for (const listener of this.#debugListeners) {
+      listener(snapshot);
+    }
+  }
+
+  #resetDebugRun(): void {
+    this.#elapsedSeconds = 0;
+    this.#totalDistance = 0;
+    this.#wallCollisions = 0;
+    this.#previousGroundPosition = null;
+  }
+
+  #disposeMicromouse(): void {
+    this.#micromouseCollisionSubscription?.dispose();
+    this.#micromouseCollisionSubscription = null;
+    this.#micromouse?.dispose();
+    this.#micromouse = null;
+    this.#motorDriver = null;
+  }
+
   #debugPlannerEvent(event: string, details: Record<string, unknown> = {}): void {
     if (!plannerDebugEnabled()) {
       return;
@@ -497,9 +640,8 @@ export class BabylonMazeSimulation {
   }
 
   #clearMaze(): void {
-    this.#micromouse?.dispose();
-    this.#micromouse = null;
-    this.#motorDriver = null;
+    this.#disposeMicromouse();
+    this.#resetDebugRun();
 
     for (const aggregate of this.#physicsAggregates) {
       aggregate.dispose();
@@ -509,6 +651,7 @@ export class BabylonMazeSimulation {
     this.#mazeRoot?.dispose(false, true);
     this.#mazeRoot = null;
     this.#currentMaze = null;
+    this.#publishDebugSnapshot();
   }
 }
 
@@ -559,6 +702,44 @@ function material(
   result.specularColor = new Color3(0.18, 0.18, 0.18);
 
   return result;
+}
+
+function collisionTargetMetadata(
+  debugCollisionRole: CollisionTargetMetadata["debugCollisionRole"],
+  sensorBeamTarget = false,
+): CollisionTargetMetadata {
+  return {
+    debugCollisionRole,
+    sensorBeamTarget,
+  };
+}
+
+function isCollisionTargetRole(
+  metadata: unknown,
+  role: CollisionTargetMetadata["debugCollisionRole"],
+): boolean {
+  return (
+    typeof metadata === "object" &&
+    metadata !== null &&
+    "debugCollisionRole" in metadata &&
+    (metadata as CollisionTargetMetadata).debugCollisionRole === role
+  );
+}
+
+function vectorSnapshot(vector: MicromouseDebugKinematics["position"]): DebugVector3 {
+  return {
+    x: vector.x,
+    y: vector.y,
+    z: vector.z,
+  };
+}
+
+function degreesVectorSnapshot(vector: MicromouseDebugKinematics["rotationRadians"]): DebugVector3 {
+  return {
+    x: vector.x * RADIANS_TO_DEGREES,
+    y: vector.y * RADIANS_TO_DEGREES,
+    z: vector.z * RADIANS_TO_DEGREES,
+  };
 }
 
 function updateTopCamera(camera: ArcRotateCamera, size: number, aspect: number): void {

@@ -18,6 +18,7 @@ import {
   PhysicsConstraintMotorType,
   PhysicsMotionType,
   PhysicsShapeType,
+  type IPhysicsCollisionEvent,
 } from "@babylonjs/core/Physics/v2/IPhysicsEnginePlugin.js";
 import { PhysicsMaterialCombineMode } from "@babylonjs/core/Physics/v2/physicsMaterial.js";
 import { PhysicsShapeCylinder } from "@babylonjs/core/Physics/v2/physicsShape.js";
@@ -51,6 +52,10 @@ interface SensorBeamVisual {
   readonly jitterFrequency: number;
 }
 
+interface Disposable {
+  dispose(): void;
+}
+
 export interface MicromouseMaterials {
   readonly board: StandardMaterial;
   readonly boardEdge: StandardMaterial;
@@ -79,6 +84,19 @@ export interface MicromouseDisplayModelOptions {
   readonly parent?: TransformNode | Mesh;
   readonly includeWheels?: boolean;
   readonly namePrefix?: string;
+}
+
+export interface MicromouseDebugKinematics {
+  readonly position: RobotGroundTruthPose["origin"];
+  readonly rotationRadians: RobotGroundTruthPose["origin"];
+  readonly linearVelocity: RobotGroundTruthPose["origin"];
+  readonly angularVelocityRadians: RobotGroundTruthPose["origin"];
+}
+
+export interface MicromouseCollisionEvent {
+  readonly type: IPhysicsCollisionEvent["type"];
+  readonly collidedBodyName: string;
+  readonly collidedMetadata: unknown;
 }
 
 const ZERO_COMMAND: MotorCommand = {
@@ -168,6 +186,52 @@ export class MicromouseRig {
       this.#chassis.position,
       this.#chassis.rotationQuaternion ?? Quaternion.Identity(),
     );
+  }
+
+  getDebugKinematics(): MicromouseDebugKinematics {
+    const rotation = this.#chassis.rotationQuaternion ?? Quaternion.Identity();
+    const euler = rotation.toEulerAngles();
+    const linearVelocity = this.#chassisAggregate.body.getLinearVelocity();
+    const angularVelocity = this.#chassisAggregate.body.getAngularVelocity();
+
+    return {
+      position: this.getGroundTruthPose().origin,
+      rotationRadians: vectorPoint(euler),
+      linearVelocity: vectorPoint(linearVelocity),
+      angularVelocityRadians: vectorPoint(angularVelocity),
+    };
+  }
+
+  onCollision(listener: (event: MicromouseCollisionEvent) => void): Disposable {
+    if (this.#disposed) {
+      return { dispose: () => undefined };
+    }
+
+    const registrations = [
+      this.#chassisAggregate.body,
+      ...this.#wheels.map((wheel) => wheel.body),
+    ].map((body) => {
+      body.setCollisionCallbackEnabled(true);
+      return {
+        body,
+        observer: body.getCollisionObservable().add((event) => {
+          listener({
+            type: event.type,
+            collidedBodyName: event.collidedAgainst.transformNode.name,
+            collidedMetadata: event.collidedAgainst.transformNode.metadata,
+          });
+        }),
+      };
+    });
+
+    return {
+      dispose() {
+        for (const { body, observer } of registrations) {
+          body.getCollisionObservable().remove(observer);
+          body.setCollisionCallbackEnabled(false);
+        }
+      },
+    };
   }
 
   shouldUseRecoveryCommand(command: MotorCommand, deltaSeconds: number): boolean {
@@ -1437,6 +1501,14 @@ function wheelAxleLocalY(): number {
 
 function localToWorld(local: Vector3, origin: Vector3, rotation: Quaternion): Vector3 {
   return Vector3.TransformCoordinates(local, Matrix.Compose(Vector3.One(), rotation, origin));
+}
+
+function vectorPoint(vector: Vector3): RobotGroundTruthPose["origin"] {
+  return {
+    x: vector.x,
+    y: vector.y,
+    z: vector.z,
+  };
 }
 
 function vectorFromBlueprint(vector: {

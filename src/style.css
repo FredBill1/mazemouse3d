@@ -151,7 +151,8 @@ textarea {
   touch-action: none;
 }
 
-.metrics-panel {
+.metrics-panel,
+.debug-panel {
   display: flex;
   height: 100%;
   min-width: 0;
@@ -162,6 +163,21 @@ textarea {
   padding: 14px;
   color: #d9e2ea;
   background: #14191f;
+}
+
+.debug-section {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.debug-section-title {
+  color: #91a0ae;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.2;
+  text-transform: uppercase;
 }
 
 .metrics-header {
@@ -225,6 +241,14 @@ textarea {
   color: #edf3f8;
   overflow-wrap: anywhere;
   text-align: right;
+}
+
+.debug-metric-grid {
+  grid-template-columns: minmax(118px, 1fr) minmax(108px, 1fr);
+}
+
+.debug-metric-grid dd {
+  font-variant-numeric: tabular-nums;
 }
 
 .status-block,
