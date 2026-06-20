@@ -21,14 +21,6 @@ describe("random motor driver", () => {
       expect(Math.abs(command.rightRadPerSec)).toBeLessThanOrEqual(8);
     }
   });
-
-  it("can issue recovery commands", () => {
-    const driver = new RandomMotorDriver(7, { maxWheelRadPerSec: 10 });
-    const command = driver.next(0.2, true);
-
-    expect(Math.max(Math.abs(command.leftRadPerSec), Math.abs(command.rightRadPerSec))).toBe(5.5);
-    expect(command.leftRadPerSec * command.rightRadPerSec).toBeLessThan(0);
-  });
 });
 
 function sampleCommands(seed: number): string[] {

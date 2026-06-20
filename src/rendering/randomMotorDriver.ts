@@ -35,14 +35,8 @@ export class RandomMotorDriver {
     };
   }
 
-  next(deltaSeconds: number, recoveryMode = false): MotorCommand {
+  next(deltaSeconds: number): MotorCommand {
     this.#remainingSeconds -= Math.max(0, deltaSeconds);
-
-    if (recoveryMode) {
-      this.#command = this.#createRecoveryCommand();
-      this.#remainingSeconds = 0.35;
-      return this.#command;
-    }
 
     if (this.#remainingSeconds <= 0) {
       this.#command = this.#createRandomCommand();
@@ -119,14 +113,6 @@ export class RandomMotorDriver {
       },
       this.#options.maxWheelRadPerSec,
     );
-  }
-
-  #createRecoveryCommand(): MotorCommand {
-    const speed = 0.55 * this.#options.maxWheelRadPerSec;
-
-    return this.#random() < 0.5
-      ? { leftRadPerSec: -speed, rightRadPerSec: speed * 0.55 }
-      : { leftRadPerSec: speed * 0.55, rightRadPerSec: -speed };
   }
 }
 

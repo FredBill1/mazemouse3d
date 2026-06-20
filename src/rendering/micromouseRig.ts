@@ -29,7 +29,7 @@ import {
   type SensorBlueprint,
   type WheelBlueprint,
 } from "./micromouseModel";
-import { commandMagnitude, type MotorCommand, type RobotGroundTruthPose } from "./motorDriver";
+import type { MotorCommand, RobotGroundTruthPose } from "./motorDriver";
 
 interface WheelAssembly {
   readonly layout: WheelBlueprint;
@@ -112,7 +112,6 @@ export class MicromouseRig {
   readonly #sensorBeams: SensorBeamVisual[] = [];
   #sensorBeamObserver: IObserver | null = null;
   #sensorBeamSeconds = 0;
-  #slowSeconds = 0;
   #disposed = false;
 
   constructor(scene: Scene, materials: MicromouseMaterials, maze: MazeSnapshot) {
@@ -193,23 +192,6 @@ export class MicromouseRig {
 
   getCollisionBodies(): readonly PhysicsBody[] {
     return [this.#chassisAggregate.body, ...this.#wheels.map((wheel) => wheel.body)];
-  }
-
-  shouldUseRecoveryCommand(command: MotorCommand, deltaSeconds: number): boolean {
-    if (commandMagnitude(command) < 5) {
-      this.#slowSeconds = 0;
-      return false;
-    }
-
-    const speed = this.#chassisAggregate.body.getLinearVelocity().length();
-
-    if (speed < 0.035) {
-      this.#slowSeconds += deltaSeconds;
-    } else {
-      this.#slowSeconds = 0;
-    }
-
-    return this.#slowSeconds > 1.1;
   }
 
   shouldReset(maze: MazeSnapshot): boolean {

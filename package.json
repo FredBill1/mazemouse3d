@@ -12,6 +12,7 @@
     "generate:default-maze": "npm run build:wasm:maze-gen && node scripts/generate-default-maze.mjs",
     "lint": "eslint . && cargo clippy --workspace --all-targets -- -D warnings",
     "preview": "vite preview",
+    "verify:controller": "npm run build:wasm:dev && node scripts/verify-controller.mjs",
     "test": "npm run build:wasm:dev && vitest run && cargo test --workspace",
     "typecheck": "npm run build:wasm:dev && npm run typecheck:ts",
     "typecheck:ts": "tsc --noEmit",
@@ -22,6 +23,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
+    "@playwright/test": "^1.61.0",
     "@vitest/coverage-v8": "^4.1.8",
     "eslint": "^10.5.0",
     "eslint-config-prettier": "^10.1.8",

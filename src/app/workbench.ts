@@ -252,6 +252,35 @@ class DebugPanel implements IContentRenderer {
         ],
         this.#slots,
       ),
+      debugSection(
+        "Controller",
+        [
+          ["controller-status", "Status"],
+          ["dwb-frequency", "DWB"],
+          ["smoother-frequency", "Smoother"],
+          ["worker-latency", "Worker latency"],
+          ["worker-compute", "Worker compute"],
+          ["target-cell", "Target cell"],
+          ["command-linear", "Command linear"],
+          ["command-angular", "Command angular"],
+          ["valid-trajectories", "Valid trajectories"],
+        ],
+        this.#slots,
+      ),
+      debugSection(
+        "DWB Diagnostics",
+        [
+          ["current-twist", "Current v/w"],
+          ["target-twist", "Target v/w"],
+          ["dynamic-window", "Dynamic window"],
+          ["best-trajectory", "Best trajectory"],
+          ["best-score", "Best score"],
+          ["clearance", "Clearance"],
+          ["path-progress", "Path progress"],
+          ["rejects", "Rejects"],
+        ],
+        this.#slots,
+      ),
     );
     this.#unsubscribe = this.#simulation.subscribeDebug((snapshot) => this.#render(snapshot));
   }
@@ -271,6 +300,59 @@ class DebugPanel implements IContentRenderer {
     this.#setVector("rotation", snapshot.rotationDegrees, formatDegrees);
     this.#setVector("linear-velocity", snapshot.linearVelocity, formatUnitSpeed);
     this.#setVector("angular-velocity", snapshot.angularVelocityDegrees, formatDegreesPerSecond);
+    this.#set("controller-status", snapshot.controller.status);
+    this.#set("dwb-frequency", formatHz(snapshot.controller.dwbHz));
+    this.#set("smoother-frequency", formatHz(snapshot.controller.smootherHz));
+    this.#set(
+      "worker-latency",
+      snapshot.controller.workerLatencyMs === null
+        ? "--"
+        : `${snapshot.controller.workerLatencyMs.toFixed(1)} ms`,
+    );
+    this.#set("worker-compute", `${snapshot.controller.workerComputeMs.toFixed(2)} ms`);
+    this.#set(
+      "target-cell",
+      snapshot.controller.targetCell === null ? "--" : String(snapshot.controller.targetCell),
+    );
+    this.#set("command-linear", formatUnitSpeed(snapshot.controller.linearSpeed));
+    this.#set("command-angular", formatRadiansPerSecond(snapshot.controller.angularSpeed));
+    this.#set(
+      "valid-trajectories",
+      `${snapshot.controller.validTrajectories}/${snapshot.controller.sampledTrajectories}`,
+    );
+    this.#set(
+      "current-twist",
+      `${snapshot.controller.currentLinearSpeed.toFixed(3)} / ${snapshot.controller.currentAngularSpeed.toFixed(3)}`,
+    );
+    this.#set(
+      "target-twist",
+      `${snapshot.controller.targetLinearSpeed.toFixed(3)} / ${snapshot.controller.targetAngularSpeed.toFixed(3)}`,
+    );
+    this.#set(
+      "dynamic-window",
+      `v ${snapshot.controller.dynamicWindow.minV.toFixed(2)}..${snapshot.controller.dynamicWindow.maxV.toFixed(2)}, w ${snapshot.controller.dynamicWindow.minW.toFixed(2)}..${snapshot.controller.dynamicWindow.maxW.toFixed(2)}`,
+    );
+    this.#set(
+      "best-trajectory",
+      snapshot.controller.best
+        ? `${snapshot.controller.best.linearSpeed.toFixed(3)} / ${snapshot.controller.best.angularSpeed.toFixed(3)}`
+        : "--",
+    );
+    this.#set(
+      "best-score",
+      snapshot.controller.best
+        ? `${snapshot.controller.best.score.total.toFixed(2)} p=${snapshot.controller.best.score.progress.toFixed(2)} c=${snapshot.controller.best.score.minClearance.toFixed(3)}`
+        : "--",
+    );
+    this.#set(
+      "clearance",
+      `${formatFinite(snapshot.controller.currentClearance)} collides=${snapshot.controller.currentPoseCollides ? "yes" : "no"}`,
+    );
+    this.#set(
+      "path-progress",
+      `${snapshot.controller.pathProgress.toFixed(2)} / ${snapshot.controller.pathLength.toFixed(2)} (${snapshot.controller.remainingDistance.toFixed(2)} left, err ${formatFinite(snapshot.controller.pathTrackingError)})`,
+    );
+    this.#set("rejects", formatRejects(snapshot.controller.rejectedTrajectories));
   }
 
   #setVector(
@@ -384,4 +466,37 @@ function formatDegrees(value: number): string {
 
 function formatDegreesPerSecond(value: number): string {
   return `${value.toFixed(1)} deg/s`;
+}
+
+function formatHz(value: number): string {
+  return value > 0 ? `${value.toFixed(1)} Hz` : "--";
+}
+
+function formatRadiansPerSecond(value: number): string {
+  return `${((value * 180) / Math.PI).toFixed(1)} deg/s`;
+}
+
+function formatFinite(value: number): string {
+  return Number.isFinite(value) ? value.toFixed(3) : "--";
+}
+
+function formatRejects(
+  rejects: MazeSimulationDebugSnapshot["controller"]["rejectedTrajectories"],
+): string {
+  const entries: Array<[string, number]> = [
+    ["cur", rejects.currentPoseCollision],
+    ["roll", rejects.rolloutCollision],
+    ["brake", rejects.brakingCollision],
+    ["wheel", rejects.wheelSpeed],
+    ["track", rejects.trackability],
+    ["clear", rejects.lowClearance],
+    ["prog", rejects.noProgress],
+    ["path", rejects.noPathProjection],
+    ["nan", rejects.nonFiniteScore],
+  ];
+  const parts = entries
+    .filter(([, count]) => count > 0)
+    .map(([label, count]) => `${label}:${count}`);
+
+  return parts.length > 0 ? parts.join(" ") : "none";
 }

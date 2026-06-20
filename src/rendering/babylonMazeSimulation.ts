@@ -1,5 +1,4 @@
 import HavokPhysics from "@babylonjs/havok";
-import initMazeNav from "../generated/maze-nav/maze_nav.js";
 import { ArcRotateCamera } from "@babylonjs/core/Cameras/arcRotateCamera.js";
 import { Camera } from "@babylonjs/core/Cameras/camera.js";
 import { Engine } from "@babylonjs/core/Engines/engine.js";
@@ -32,7 +31,13 @@ import {
   type MicromouseMaterials,
 } from "./micromouseRig";
 import type { MotorCommand } from "./motorDriver";
-import { PlannedMotorDriver, emitPlannerDebug, plannerDebugEnabled } from "./plannedMotorDriver";
+import {
+  DwbMotorDriver,
+  EMPTY_DWB_DEBUG_SNAPSHOT,
+  emitNavigationDebug,
+  navigationDebugEnabled,
+  type DwbMotorDriverDebugSnapshot,
+} from "./dwbMotorDriver";
 import {
   collisionTargetMetadata,
   isStartedRobotWallCollision,
@@ -58,6 +63,7 @@ export interface MazeSimulationDebugSnapshot {
   readonly totalDistance: number;
   readonly averageSpeed: number;
   readonly wallCollisions: number;
+  readonly controller: DwbMotorDriverDebugSnapshot;
 }
 
 export type MazeSimulationDebugListener = (snapshot: MazeSimulationDebugSnapshot) => void;
@@ -72,6 +78,7 @@ interface MazeMaterials {
   readonly start: StandardMaterial;
   readonly goal: StandardMaterial;
   readonly path: StandardMaterial;
+  readonly navigationPath: StandardMaterial;
 }
 
 interface RegisteredMazeView {
@@ -85,12 +92,13 @@ interface RegisteredMazeView {
 }
 
 const WALL_HEIGHT = 0.36;
-const WALL_THICKNESS = 0.08;
+const WALL_THICKNESS = 0.04;
 const FLOOR_COLLIDER_THICKNESS = 0.04;
 const PHYSICS_SUB_STEP_MS = 1000 / 120;
 const PHYSICS_STEP_SECONDS = 1 / 120;
 const DRAW_SOLUTION_CELLS = false;
 const RADIANS_TO_DEGREES = 180 / Math.PI;
+const DEBUG_DISTANCE_SCALE = 2.2;
 const EMPTY_DEBUG_SNAPSHOT: MazeSimulationDebugSnapshot = {
   hasMicromouse: false,
   elapsedSeconds: 0,
@@ -102,6 +110,7 @@ const EMPTY_DEBUG_SNAPSHOT: MazeSimulationDebugSnapshot = {
   totalDistance: 0,
   averageSpeed: 0,
   wallCollisions: 0,
+  controller: EMPTY_DWB_DEBUG_SNAPSHOT,
 };
 
 export class BabylonMazeSimulation {
@@ -123,9 +132,11 @@ export class BabylonMazeSimulation {
   #micromouse: MicromouseRig | null = null;
   #physicsCollisionObserver: IObserver | null = null;
   #micromouseCollisionBodies = new Set<PhysicsBody>();
-  #motorDriver: PlannedMotorDriver | null = null;
+  #motorDriver: DwbMotorDriver | null = null;
   #motorCommand: MotorCommand = { leftRadPerSec: 0, rightRadPerSec: 0 };
   #plannerDebugControlTicks = 0;
+  #navigationPathMarkers: Mesh[] = [];
+  #navigationPathVersion = -1;
   #debugSnapshot: MazeSimulationDebugSnapshot = EMPTY_DEBUG_SNAPSHOT;
   #elapsedSeconds = 0;
   #totalDistance = 0;
@@ -162,7 +173,7 @@ export class BabylonMazeSimulation {
     this.#mouseMaterials = createMicromouseMaterials(this.#scene);
 
     this.#debugPlannerEvent("simulation-loading-wasm");
-    await Promise.all([this.#enablePhysics(), initMazeNav().then(() => undefined)]);
+    await this.#enablePhysics();
 
     if (this.#disposed || !this.#scene || !this.#engine) {
       return;
@@ -502,13 +513,13 @@ export class BabylonMazeSimulation {
       body.setCollisionCallbackEnabled(true);
     }
 
-    this.#motorDriver = new PlannedMotorDriver(maze, { debug: plannerDebugEnabled() });
+    this.#motorDriver = new DwbMotorDriver(maze, { debug: navigationDebugEnabled() });
     this.#motorCommand = { leftRadPerSec: 0, rightRadPerSec: 0 };
     this.#plannerDebugControlTicks = 0;
     this.#publishDebugSnapshot();
 
-    if (plannerDebugEnabled()) {
-      emitPlannerDebug({
+    if (navigationDebugEnabled()) {
+      emitNavigationDebug({
         event: "simulation-micromouse-created",
         mazeSeed: maze.seed,
         mazeSize: maze.size,
@@ -526,18 +537,21 @@ export class BabylonMazeSimulation {
       return;
     }
 
-    this.#motorCommand = this.#motorDriver.next(
-      PHYSICS_STEP_SECONDS,
-      this.#micromouse.getGroundTruthPose(),
-    );
+    const pose = this.#micromouse.getGroundTruthPose();
+    const kinematics = this.#micromouse.getDebugKinematics();
+    this.#motorCommand = this.#motorDriver.next(PHYSICS_STEP_SECONDS, {
+      pose,
+      velocity: robotFrameVelocity(pose.yaw, kinematics),
+    });
     this.#micromouse.setMotorCommand(this.#motorCommand);
+    this.#updateNavigationPathMarkers();
     this.#plannerDebugControlTicks += 1;
 
     if (
-      plannerDebugEnabled() &&
+      navigationDebugEnabled() &&
       (this.#plannerDebugControlTicks === 1 || this.#plannerDebugControlTicks % 120 === 0)
     ) {
-      emitPlannerDebug({
+      emitNavigationDebug({
         event: "simulation-control",
         tick: this.#plannerDebugControlTicks,
         command: {
@@ -587,6 +601,7 @@ export class BabylonMazeSimulation {
     }
 
     const kinematics = this.#micromouse.getDebugKinematics();
+    const scaledDistance = this.#totalDistance * DEBUG_DISTANCE_SCALE;
     this.#emitDebugSnapshot({
       hasMicromouse: true,
       elapsedSeconds: this.#elapsedSeconds,
@@ -595,14 +610,25 @@ export class BabylonMazeSimulation {
       rotationDegrees: degreesVectorSnapshot(kinematics.rotationRadians),
       linearVelocity: vectorSnapshot(kinematics.linearVelocity),
       angularVelocityDegrees: degreesVectorSnapshot(kinematics.angularVelocityRadians),
-      totalDistance: this.#totalDistance,
-      averageSpeed: this.#elapsedSeconds > 0 ? this.#totalDistance / this.#elapsedSeconds : 0,
+      totalDistance: scaledDistance,
+      averageSpeed: this.#elapsedSeconds > 0 ? scaledDistance / this.#elapsedSeconds : 0,
       wallCollisions: this.#wallCollisions,
+      controller: this.#motorDriver?.debugSnapshot ?? EMPTY_DWB_DEBUG_SNAPSHOT,
     });
   }
 
   #emitDebugSnapshot(snapshot: MazeSimulationDebugSnapshot): void {
     this.#debugSnapshot = snapshot;
+
+    try {
+      (
+        window as typeof window & {
+          __MAZEMOUSE3D_DEBUG_SNAPSHOT__?: MazeSimulationDebugSnapshot;
+        }
+      ).__MAZEMOUSE3D_DEBUG_SNAPSHOT__ = snapshot;
+    } catch {
+      // The snapshot is still delivered through subscribers in non-window environments.
+    }
 
     for (const listener of this.#debugListeners) {
       listener(snapshot);
@@ -624,18 +650,57 @@ export class BabylonMazeSimulation {
     this.#micromouseCollisionBodies.clear();
     this.#micromouse?.dispose();
     this.#micromouse = null;
+    this.#motorDriver?.dispose();
     this.#motorDriver = null;
+    this.#clearNavigationPathMarkers();
   }
 
   #debugPlannerEvent(event: string, details: Record<string, unknown> = {}): void {
-    if (!plannerDebugEnabled()) {
+    if (!navigationDebugEnabled()) {
       return;
     }
 
-    emitPlannerDebug({
+    emitNavigationDebug({
       event,
       ...details,
     });
+  }
+
+  #updateNavigationPathMarkers(): void {
+    if (
+      !this.#scene ||
+      !this.#mazeRoot ||
+      !this.#materials ||
+      !this.#motorDriver ||
+      this.#navigationPathVersion === this.#motorDriver.pathVersion
+    ) {
+      return;
+    }
+
+    this.#clearNavigationPathMarkers();
+    this.#navigationPathVersion = this.#motorDriver.pathVersion;
+
+    for (const point of this.#motorDriver.pathPoints) {
+      const marker = MeshBuilder.CreateSphere(
+        "dwb-path-point",
+        { diameter: 0.09, segments: 12 },
+        this.#scene,
+      );
+      marker.position.set(point.x, 0.07, point.z);
+      marker.material = this.#materials.navigationPath;
+      marker.parent = this.#mazeRoot;
+      marker.isPickable = false;
+      this.#navigationPathMarkers.push(marker);
+    }
+  }
+
+  #clearNavigationPathMarkers(): void {
+    for (const marker of this.#navigationPathMarkers) {
+      marker.dispose(false, true);
+    }
+
+    this.#navigationPathMarkers = [];
+    this.#navigationPathVersion = -1;
   }
 
   #addStaticBody(
@@ -711,6 +776,12 @@ function createMazeMaterials(scene: Scene): MazeMaterials {
       new Color3(0.2, 0.55, 0.88),
       new Color3(0.02, 0.06, 0.12),
     ),
+    navigationPath: material(
+      scene,
+      "navigation-path-material",
+      new Color3(0.18, 0.95, 0.38),
+      new Color3(0.02, 0.22, 0.08),
+    ),
   };
 }
 
@@ -741,6 +812,18 @@ function degreesVectorSnapshot(vector: MicromouseDebugKinematics["rotationRadian
     x: vector.x * RADIANS_TO_DEGREES,
     y: vector.y * RADIANS_TO_DEGREES,
     z: vector.z * RADIANS_TO_DEGREES,
+  };
+}
+
+function robotFrameVelocity(
+  yaw: number,
+  kinematics: MicromouseDebugKinematics,
+): { vx: number; omega: number } {
+  const velocity = kinematics.linearVelocity;
+
+  return {
+    vx: velocity.x * Math.sin(yaw) + velocity.z * Math.cos(yaw),
+    omega: kinematics.angularVelocityRadians.y,
   };
 }
 

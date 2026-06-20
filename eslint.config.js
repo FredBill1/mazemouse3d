@@ -30,4 +30,12 @@ export default tseslint.config(
       "no-undef": "off",
     },
   },
+  {
+    files: ["**/*.mjs"],
+    languageOptions: {
+      globals: {
+        ...globals.node,
+      },
+    },
+  },
 );

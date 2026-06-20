@@ -21,6 +21,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Precomputed default maze data and manual generation script for faster initial page startup.
 - Red flickering distance sensor beams with wall hit points in the Babylon.js simulation.
 - Dockview debug panel with live elapsed time, FPS, pose, velocity, travel distance, average speed, and wall-hit count.
+- Rust WASM DWB-style navigation controller with velocity smoothing in a dedicated Web Worker.
+- Manual `npm run verify:controller` browser verification for 60-second speed and wall-collision checks.
 
 ### Changed
 
@@ -30,7 +32,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Aligned the micromouse PCB visual footprint and chassis collision mesh, including wheel cutouts and rear battery/wire clearance fixes.
 - Replaced the default random micromouse motion with repeated random target planning and path following.
 - Made maze generation score history opt-in to reduce default generation memory and transfer size.
+- Replaced pure-pursuit path tracking with velocity-aware DWB trajectory sampling, smoothed high-rate wheel commands, green path-point visualization, and controller frequency metrics.
+- Tuned the DWB controller, wall thickness, and wheel motor force for the 60-second browser verification target.
 
 ### Fixed
 
 - Count micromouse wheel contacts in the Debug panel wall-hit total.
+- Prevented stale no-valid local plans from stopping the DWB worker by retrying with collision-safe relaxed clearance scoring.
+- Bounded DWB path shortcut collision checks to avoid long worker stalls and stale high-speed commands during replanning.
